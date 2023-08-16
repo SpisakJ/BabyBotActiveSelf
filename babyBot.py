@@ -60,7 +60,7 @@ class soundPrediction(torch.nn.Module):
         return x
     
 class  BabyBot(pl.LightningModule):
-    def __init__(self,suckingFrequency = 0.1, memory = 10, noise=0.1, lr=0.001, condition="analog",threshold=0.1,age="old"):
+    def __init__(self,suckingFrequency = 0.1, memory = 10, noise=0.1, lr=0.001, condition="analog",threshold=0.1,age="old",sensoryNoise = 0.1,lossWeigths=[1.0,1.0,1.0]):
         super(BabyBot,self).__init__()
         
         #age of the baby only used for plotting
@@ -108,8 +108,17 @@ class  BabyBot(pl.LightningModule):
         #variable to record produced force
         self.producedForcesT = []
         
-        #strenght of the baby, influences instinct
-        self.strength = 0.1
+        #strenght of the baby, influences instinct, this means it is very important for our baseline
+        self.strength = 0.4
+        
+        #another noise we call sensory noise which influenenced how correctly the baby heard the past sound
+        self.sensoryNoise = sensoryNoise
+        
+        #how long we train on one condition
+        self.conditionLength = 2400*1/6
+        
+        #to weigh losses differently
+        self.lossWeigths = lossWeigths
         
     #models time passed important for instinct
     def timestep(self):
@@ -190,9 +199,21 @@ class  BabyBot(pl.LightningModule):
         #we calculate exhaustion which is how different the sucking force is from the instinct, perhaps this should only work if its higher than instinct 
         exhaustion = self.mseLoss(regulatedForce,instinctForce.float())#abs(regulatedForce-instinctForce)
         
+        #here I want to change the condition based on time to passed to be closer to the original experiement where we have baseline->analog->Nonanalog and so on in sequence
+        if self.time*10 > self.conditionLength:
+            if (self.time*10 -self.conditionLength)% self.conditionLength == 0:
+                if self.condition=="analog":
+                    self.condition= "Non-analog"
+                elif self.condition=="Non-analog":
+                    self.condition="analog"
+            
+        
+        
         #basicly the force to sound function but adjusted and copied here to make back propagation easier 
         #this should be changed so that it just uses the existing funciton
-        if self.condition == "analog":
+        if self.time*10 < self.conditionLength or self.time*10 > 5* self.conditionLength:
+            regulatedForce = regulatedForce*0
+        elif self.condition == "analog":
             if regulatedForce > self.threshold: #og paper has a treshold of some force not sure hwo to translate the amount of force
                 regulatedForce = regulatedForce #sound depends on force
             else:
@@ -216,13 +237,13 @@ class  BabyBot(pl.LightningModule):
         repLoss = self.mseLoss(regulatedForce,label)
         
         #we add all our losses together
-        loss =repLoss+predictionLoss+exhaustion
+        loss =repLoss*self.lossWeigths[0]+predictionLoss*self.lossWeigths[1]+exhaustion*self.lossWeigths[2]
         
         #we record the loss which can be used to display the loss after training
         self.recLosses.append(loss.item())
         
         #we update the past sound with the current sound
-        self.pastSounds = torch.tensor([regulatedForce.item()]).cuda()
+        self.pastSounds = torch.tensor([regulatedForce.item()]).cuda()+self.sensoryNoise
         
         #we record the current sound so that we can display the sounds created during training at a later time.
         self.producedSoundsT.append(regulatedForce.item())
@@ -287,7 +308,7 @@ class  BabyBot(pl.LightningModule):
             
         #variable to count no sound happening in eval
         zeroCount=0
-       
+        thresholdCount = 0
         #go through produced sounds
         for sound in producedSounds:
             
@@ -300,8 +321,10 @@ class  BabyBot(pl.LightningModule):
             #if sound is 0 add 1 to our zero count
             if sound ==0:
                 zeroCount+=1
-                
-        return np.average(producedSounds),np.average(amplitude),zeroCount
+        for force in producedForces:
+            if force >= self.threshold-0.02 or sound<= self.threshold+0.02:
+                thresholdCount +=1
+        return np.average(producedSounds),np.average(amplitude),zeroCount,thresholdCount
     
     
 '''
@@ -319,45 +342,56 @@ age is named quietly badly and should probably be changed at some point, right n
     that decides onhow much force we are going to use next.
 '''
 
+#sensor noise
+
+#loss weighted
+
 #function to run experiments
-def runExperiment(epochs,condition,noise,learningRate,memory,threshold,runs,age):
+def runExperiment(epochs,condition,noise,learningRate,memory,threshold,runs,age,sensorNoise):
     #variables to record results
     averageSound = []
     averageAmp = []
     zeros = []
+    thresholdHit =[]
     
+    noiseRange = np.random.uniform(low=noise-0.1,high=noise+0.1,size=runs)
+    sensoryNoiseRange = np.random.uniform(low=sensorNoise-0.1,high=sensorNoise+0.1,size=runs)
     #how often we want to run this condition 
     for i in range(runs):
         
         #sets up the babybot, here the parameters are decided
-        myModel = BabyBot(condition=condition,noise=noise,lr=learningRate,memory=memory,threshold=threshold,age=age)
+        myModel = BabyBot(condition=condition,noise=noiseRange[i],lr=learningRate,memory=memory,threshold=threshold,age=age,sensoryNoise=sensoryNoiseRange[i])
         trainer = pl.Trainer(max_epochs=epochs)
         trainer.fit(model=myModel)   
         
         #call funciton of the model to disply some results
-        avg,amp,z = myModel.showBehaviour()    
+        avg,amp,z,t = myModel.showBehaviour()    
         
         #record results so that we can create the average of the runs 
         averageSound.append(avg)
         averageAmp.append(amp)
         zeros.append(z)
-    return np.average(averageSound),np.average(averageAmp),np.average(zeros)
+        thresholdHit.append(t)
+    return np.average(averageSound),np.average(averageAmp),np.average(zeros),np.average(thresholdHit)
 
-#non analog young baby experiment
-nonAnalogYoungSound, nonAnalogYoungAmp, nonAnalogYoungZeros = runExperiment(1000,"Non-analog", 0.3, 0.0001,1,0.2,5,"young")
+#non analog young baby experiment now only starts with nonanalog
+nonAnalogYoungSound, nonAnalogYoungAmp, nonAnalogYoungZeros,nonAnalogYoungT = runExperiment(2400,"Non-analog", 0.2, 0.01,1,0.16,2,"young",0.2)
 # analog young baby experiment
-analogYoungSound, analogYoungAmp, analogYoungZeros = runExperiment(1000,"analog", 0.3, 0.0001,1,0.2,5,"young")
+analogYoungSound, analogYoungAmp, analogYoungZeros,analogYoungT = runExperiment(2400,"analog", 0.2, 0.01,1,0.16,2,"young",0.2)
 #non analog old baby experiment
-nonAnalogOldSound, nonAnalogOldAmp, nonAnalogOldZeros = runExperiment(1000,"Non-analog", 0.3, 0.001,1,0.2,5,"old")
+nonAnalogOldSound, nonAnalogOldAmp, nonAnalogOldZeros,nonAnalogOldT = runExperiment(2400,"Non-analog", 0.1, 0.01,1,0.16,2,"old",0.1)
 # analog old baby experiment
-analogOldSound, analogOldAmp, analogOldZeros = runExperiment(1000,"analog", 0.3, 0.001,1,0.2,5,"old")
+analogOldSound, analogOldAmp, analogOldZeros,analogOldT = runExperiment(2400,"analog", 0.1, 0.01,1,0.16,2,"old",0.1)
 
 #prints of the results
-print("Old Baby: NonAnalog average, amplitude and zeros:",nonAnalogOldSound, nonAnalogOldAmp, nonAnalogOldZeros)
-print("Old Baby: Analog average, amplitude and zeros:",analogOldSound, analogOldAmp, analogOldZeros)      
-print("Young Baby: NonAnalog average, amplitude and zeros:",nonAnalogYoungSound,nonAnalogYoungAmp,nonAnalogYoungZeros)
-print("Young Baby: Analog average, amplitude and zeros:",analogYoungSound, analogYoungAmp, analogYoungZeros)    
+print("Old Baby: NonAnalog average, amplitude and zeros and thresholdHits:",nonAnalogOldSound, nonAnalogOldAmp, nonAnalogOldZeros,nonAnalogOldT)
+print("Old Baby: Analog average, amplitude and zeros and thresholdHits:",analogOldSound, analogOldAmp, analogOldZeros,analogOldT)      
+print("Young Baby: NonAnalog average, amplitude and zeros and thresholdHits:",nonAnalogYoungSound,nonAnalogYoungAmp,nonAnalogYoungZeros,nonAnalogYoungT)
+print("Young Baby: Analog average, amplitude and zeros and thresholdHits:",analogYoungSound, analogYoungAmp, analogYoungZeros,analogYoungT)    
 
+
+#TODO BASE ANA NA ANA NA BA
+#THRESHOLD 0.1 psi 0.6 max
 #%% old and young are based on the number of epochs we train for, 10 times as much trainig for old. 5 runs for each mode
 '''
 Old Baby: NonAnalog average, amplitude and zeros: 0.07111799454689025 0.12020740448951721 85.0
