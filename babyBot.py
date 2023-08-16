@@ -308,12 +308,13 @@ class  BabyBot(pl.LightningModule):
             
         #variable to count no sound happening in eval
         zeroCount=0
-        thresholdCount = 0
+        thresholdCountAna = 0
+        thresholdCountNAna = 0
         #go through produced sounds
-        for sound in producedSounds:
+        for sound in self.producedSoundsT:
             
             #how far away from the average sound is the current sound
-            amp = abs(np.average(producedSounds)-sound)
+            amp = abs(np.average(self.producedSoundsT)-sound)
             
             #add it to our amplitude variable
             amplitude.append(amp)
@@ -321,10 +322,21 @@ class  BabyBot(pl.LightningModule):
             #if sound is 0 add 1 to our zero count
             if sound ==0:
                 zeroCount+=1
-        for force in producedForces:
-            if force >= self.threshold-0.02 or sound<= self.threshold+0.02:
-                thresholdCount +=1
-        return np.average(producedSounds),np.average(amplitude),zeroCount,thresholdCount
+        for i in range (len( self.producedForcesT)):
+            if i> self.conditionLength and i < self.conditionLength*5:
+                if (i -self.conditionLength)% self.conditionLength == 0:
+                    if self.condition=="analog":
+                        self.condition= "Non-analog"
+                    elif self.condition=="Non-analog":
+                        self.condition="analog"
+            
+            if self.condition == "analog":
+                if self.producedForcesT[i] >= self.threshold-0.005 and self.producedForcesT[i]<= self.threshold+0.005:
+                    thresholdCountAna +=1
+            elif self.condition=="Non-analog":
+                if self.producedForcesT[i] >= self.threshold-0.005 and self.producedForcesT[i]<= self.threshold+0.005:
+                    thresholdCountNAna +=1
+        return np.average(producedSounds),np.average(amplitude),zeroCount,[thresholdCountAna,thresholdCountNAna]
     
     
 '''
@@ -372,16 +384,16 @@ def runExperiment(epochs,condition,noise,learningRate,memory,threshold,runs,age,
         averageAmp.append(amp)
         zeros.append(z)
         thresholdHit.append(t)
-    return np.average(averageSound),np.average(averageAmp),np.average(zeros),np.average(thresholdHit)
+    return np.average(averageSound),np.average(averageAmp),np.average(zeros),thresholdHit
 
 #non analog young baby experiment now only starts with nonanalog
-nonAnalogYoungSound, nonAnalogYoungAmp, nonAnalogYoungZeros,nonAnalogYoungT = runExperiment(2400,"Non-analog", 0.2, 0.01,1,0.16,2,"young",0.2)
+nonAnalogYoungSound, nonAnalogYoungAmp, nonAnalogYoungZeros,nonAnalogYoungT = runExperiment(2400,"Non-analog", 0.4, 0.01,1,0.16,5,"young",0.4)
 # analog young baby experiment
-analogYoungSound, analogYoungAmp, analogYoungZeros,analogYoungT = runExperiment(2400,"analog", 0.2, 0.01,1,0.16,2,"young",0.2)
+analogYoungSound, analogYoungAmp, analogYoungZeros,analogYoungT = runExperiment(2400,"analog", 0.4, 0.01,1,0.16,5,"young",0.4)
 #non analog old baby experiment
-nonAnalogOldSound, nonAnalogOldAmp, nonAnalogOldZeros,nonAnalogOldT = runExperiment(2400,"Non-analog", 0.1, 0.01,1,0.16,2,"old",0.1)
+nonAnalogOldSound, nonAnalogOldAmp, nonAnalogOldZeros,nonAnalogOldT = runExperiment(2400,"Non-analog", 0.2, 0.01,1,0.16,5,"old",0.2)
 # analog old baby experiment
-analogOldSound, analogOldAmp, analogOldZeros,analogOldT = runExperiment(2400,"analog", 0.1, 0.01,1,0.16,2,"old",0.1)
+analogOldSound, analogOldAmp, analogOldZeros,analogOldT = runExperiment(2400,"analog", 0.2, 0.01,1,0.16,5,"old",0.2)
 
 #prints of the results
 print("Old Baby: NonAnalog average, amplitude and zeros and thresholdHits:",nonAnalogOldSound, nonAnalogOldAmp, nonAnalogOldZeros,nonAnalogOldT)
@@ -392,16 +404,16 @@ print("Young Baby: Analog average, amplitude and zeros and thresholdHits:",analo
 
 #TODO BASE ANA NA ANA NA BA
 #THRESHOLD 0.1 psi 0.6 max
-#%% old and young are based on the number of epochs we train for, 10 times as much trainig for old. 5 runs for each mode
+#%%
 '''
-Old Baby: NonAnalog average, amplitude and zeros: 0.07111799454689025 0.12020740448951721 85.0
-Old Baby: Analog average, amplitude and zeros: 0.3766379394829273 0.11275526656568051 4.8
-Young Baby: NonAnalog average, amplitude and zeros: 0.3813555111885071 0.27084537514448165 25.4
-Young Baby: Analog average, amplitude and zeros: 0.4621373709738254 0.109593042871356 2.2
+NonAnalog or analog signifies the condition we start with after baseline. at the end we have for each run [analoghits,nonanaloghits]
+We can see for the old baby 9/10 babys have more threshold hits during the analog condition
+for the young baby its 5/10
 
-#here i devided them by learning rate instead, noise is also a bit higher
-Old Baby: NonAnalog average, amplitude and zeros: 0.2543489261865616 0.26236681587457655 50.8
-Old Baby: Analog average, amplitude and zeros: 0.279271654009819 0.18987583573400973 33.4
-Young Baby: NonAnalog average, amplitude and zeros: 0.440678873181343 0.26595384658336635 14.8
-Young Baby: Analog average, amplitude and zeros: 0.6500598652660847 0.17061184880316257 6.2
+
+Old Baby: NonAnalog average, amplitude and zeros and thresholdHits: 0.27060819005966186 0.2507196765057453 1460.6 [[155, 130], [139, 102], [141, 110], [126, 107], [0, 68]]
+Old Baby: Analog average, amplitude and zeros and thresholdHits: 0.1886833301782608 0.1931023842670789 1132.6 [[42, 29], [9, 6], [17, 7], [30, 8], [51, 41]]
+Young Baby: NonAnalog average, amplitude and zeros and thresholdHits: 0.2789007151126861 0.24287797078049844 1531.0 [[80, 136], [0, 25], [123, 111], [82, 49], [97, 100]]
+Young Baby: Analog average, amplitude and zeros and thresholdHits: 0.2885687850117683 0.1669351845515768 1562.0 [[95, 98], [105, 61], [93, 47], [91, 105], [114, 125]]
+
 '''
