@@ -350,9 +350,9 @@ class  BabyBot(pl.LightningModule):
                 zeroCount+=1
         for i in range (len( self.producedForcesT)):
             if self.label[i] == 1:
-                self.condition == "analog"
+                self.condition = "analog"
             else:
-                self.condition == "Non-analog"
+                self.condition = "Non-analog"
             
             if self.condition == "analog":
                 if self.producedForcesT[i] >= self.threshold-0.01 and self.producedForcesT[i]<= self.threshold+0.01:
@@ -415,13 +415,13 @@ def runExperiment(epochs,condition,noise,learningRate,memory,threshold,runs,age,
 
 #non analog young baby experiment now only starts with nonanalog
 # params: epochs,condition,noise,learningRate,memory,threshold,runs,age,sensorNoise,lossWeights,strength
-nonAnalogYoung  = runExperiment(4800,"Non-analog", 0.2, 0.001,1,0.16,5,"young",0.15,[1.0,0.0,1.0],0.4)
+nonAnalogYoung  = runExperiment(4800,"Non-analog", 0.05, 0.001,1,0.16,1,"young",0.15,[1.0,1.0,1.0],0.4)
 # analog young baby experiment
-analogYoung = runExperiment(4800,"analog", 0.2, 0.001,1,0.16,5,"young",0.15,[1.0,0.0,1.0],0.4)
+analogYoung = runExperiment(4800,"analog", 0.05, 0.001,1,0.16,1,"young",0.15,[1.0,1.0,1.0],0.4)
 #non analog old baby experiment
-nonAnalogOld = runExperiment(4800,"Non-analog", 0.05, 0.001,3,0.16,5,"old",0.05,[1.0,0.0,1.0],0.4)
+nonAnalogOld = runExperiment(4800,"Non-analog", 0.02, 0.001,3,0.16,1,"old",0.05,[1.0,1.0,1.0],0.4)
 # analog old baby experiment
-analogOld = runExperiment(4800,"analog", 0.05, 0.001,3,0.16,5,"old",0.05,[1.0,0.0,1.0],0.4)
+analogOld = runExperiment(4800,"analog", 0.02, 0.001,3,0.16,1,"old",0.05,[1.0,1.0,1.0],0.4)
 
 #prints of the results
 
