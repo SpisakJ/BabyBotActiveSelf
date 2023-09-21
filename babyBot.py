@@ -99,6 +99,9 @@ class  BabyBot(pl.LightningModule):
         #mean square error loss
         self.mseLoss = torch.nn.MSELoss()
         
+        #tThis is badly named, i use it to keep track of which condition was used at which timestep.
+        self.label = []
+        
         #variable to record losses
         self.recLosses = []
         
@@ -124,7 +127,7 @@ class  BabyBot(pl.LightningModule):
         self.lossWeigths = lossWeigths
         
         #this is so that in non anlog condition next timesteps after being over threshold still make sound
-        self.leftOverSoundCounter = 10
+        self.leftOverSoundCounter = 100
         
     #models time passed important for instinct
     def timestep(self):
@@ -207,8 +210,9 @@ class  BabyBot(pl.LightningModule):
         #we calculate exhaustion which is how different the sucking force is from the instinct, perhaps this should only work if its higher than instinct 
         exhaustion = self.mseLoss(regulatedForce,instinctForce.float())#abs(regulatedForce-instinctForce)
         
+        
         #here I want to change the condition based on time to passed to be closer to the original experiement where we have baseline->analog->Nonanalog and so on in sequence
-        if self.time*10 > self.conditionLength:
+        if self.time*10 > self.conditionLength*2: #*2 because first baseline and then the start condition
             if (self.time*10 -self.conditionLength)% self.conditionLength <= 1:
                 if self.condition=="analog":
                     self.condition= "Non-analog"
@@ -229,9 +233,9 @@ class  BabyBot(pl.LightningModule):
         elif self.condition == "Non-analog":
             if regulatedForce > self.threshold:
                 regulatedForce = regulatedForce*0+torch.rand(1).float().cuda() #sound does not depend on force
-                self.leftOverSoundCounter = 10
+                self.leftOverSoundCounter = 100
             else:
-                if self.leftOverSoundCounter == 0:
+                if self.leftOverSoundCounter >= 0:
                     regulatedForce = regulatedForce*0#torch.tensor([0.0],requires_grad=True).float().cuda()
                 else:
                     regulatedForce = regulatedForce*0+torch.rand(1).float().cuda()
@@ -264,6 +268,10 @@ class  BabyBot(pl.LightningModule):
         #self.pastSounds = torch.tensor([regulatedForce.item()]).cuda()+self.sensoryNoise
         #we record the current sound so that we can display the sounds created during training at a later time.
         self.producedSoundsT.append(regulatedForce.item())
+        if self.condition == "analog":
+            self.label.append(1)
+        else:
+            self.label.append(0)
         
         
         return loss
@@ -317,6 +325,7 @@ class  BabyBot(pl.LightningModule):
         plt.title("Sound Train "+self.condition+" start " + self.age)
         plt.plot(self.producedSoundsT,"b",markersize=2.1,label="sound")
         plt.plot(self.wantedForcesT,"r",markersize=2,label="force")
+        plt.plot(self.label,"g",markersize=2,label="cond")
         plt.legend()
         plt.show()
         
@@ -340,12 +349,10 @@ class  BabyBot(pl.LightningModule):
             if sound ==0:
                 zeroCount+=1
         for i in range (len( self.producedForcesT)):
-            if i> self.conditionLength and i < self.conditionLength*5:
-                if (i -self.conditionLength)% self.conditionLength == 0:
-                    if self.condition=="analog":
-                        self.condition= "Non-analog"
-                    elif self.condition=="Non-analog":
-                        self.condition="analog"
+            if self.label[i] == 1:
+                self.condition == "analog"
+            else:
+                self.condition == "Non-analog"
             
             if self.condition == "analog":
                 if self.producedForcesT[i] >= self.threshold-0.01 and self.producedForcesT[i]<= self.threshold+0.01:
@@ -408,13 +415,13 @@ def runExperiment(epochs,condition,noise,learningRate,memory,threshold,runs,age,
 
 #non analog young baby experiment now only starts with nonanalog
 # params: epochs,condition,noise,learningRate,memory,threshold,runs,age,sensorNoise,lossWeights,strength
-nonAnalogYoung  = runExperiment(4800,"Non-analog", 0.2, 0.01,1,0.16,3,"young",0.15,[1.0,1.0,1.0],0.5)
+nonAnalogYoung  = runExperiment(4800,"Non-analog", 0.2, 0.001,1,0.16,5,"young",0.15,[1.0,0.0,1.0],0.4)
 # analog young baby experiment
-analogYoung = runExperiment(4800,"analog", 0.2, 0.01,1,0.16,3,"young",0.15,[1.0,1.0,1.0],0.5)
+analogYoung = runExperiment(4800,"analog", 0.2, 0.001,1,0.16,5,"young",0.15,[1.0,0.0,1.0],0.4)
 #non analog old baby experiment
-nonAnalogOld = runExperiment(4800,"Non-analog", 0.05, 0.01,3,0.16,3,"old",0.05,[3.0,1.0,1.0],0.5)
+nonAnalogOld = runExperiment(4800,"Non-analog", 0.05, 0.001,3,0.16,5,"old",0.05,[1.0,0.0,1.0],0.4)
 # analog old baby experiment
-analogOld = runExperiment(4800,"analog", 0.05, 0.01,3,0.16,3,"old",0.05,[3.0,1.0,1.0],0.5)
+analogOld = runExperiment(4800,"analog", 0.05, 0.001,3,0.16,5,"old",0.05,[1.0,0.0,1.0],0.4)
 
 #prints of the results
 
@@ -423,3 +430,5 @@ print("Old Baby Analog Start:  ",analogOld)
 print("Young Baby NonAnalog Start: ",nonAnalogYoung)
 print("Young Baby Analog Start:",analogYoung)  
 #%%
+'''
+'''
