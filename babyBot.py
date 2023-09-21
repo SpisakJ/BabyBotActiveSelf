@@ -210,7 +210,7 @@ class  BabyBot(pl.LightningModule):
         #we calculate exhaustion which is how different the sucking force is from the instinct, perhaps this should only work if its higher than instinct 
         exhaustion = self.mseLoss(regulatedForce,instinctForce.float())#abs(regulatedForce-instinctForce)
         
-        
+        #TODO change it so we have baseline as another condition
         #here I want to change the condition based on time to passed to be closer to the original experiement where we have baseline->analog->Nonanalog and so on in sequence
         if self.time*10 > self.conditionLength*2: #*2 because first baseline and then the start condition
             if (self.time*10 -self.conditionLength)% self.conditionLength <= 1:
@@ -301,7 +301,7 @@ class  BabyBot(pl.LightningModule):
               #  producedForces.append(regulatedForce.item())
                 
                 #add noise
-               # regulatedForce = self.suckingNoise(regulatedForce)
+               # regulatedForce = self.suckingNoise(regulatedForce[1.0,1.0,1.0])
                 
                 #record true sound
                 #trueSound = self.forceToSound(regulatedForce)
@@ -321,11 +321,11 @@ class  BabyBot(pl.LightningModule):
         #plt.plot(producedForces,"ro",markersize=2,label="force")
         #plt.legend()
         #plt.show()
-        
-        plt.title("Sound Train "+self.condition+" start " + self.age)
+        condName = "analog" if self.label[0] == 1 else "Non-analog"
+        plt.title("Sound Train "+condName+" start " + self.age)
         plt.plot(self.producedSoundsT,"b",markersize=2.1,label="sound")
         plt.plot(self.wantedForcesT,"r",markersize=2,label="force")
-        plt.plot(self.label,"g",markersize=2,label="cond")
+        #plt.plot(self.label,"g",markersize=2,label="cond")
         plt.legend()
         plt.show()
         
@@ -349,17 +349,12 @@ class  BabyBot(pl.LightningModule):
             if sound ==0:
                 zeroCount+=1
         for i in range (len( self.producedForcesT)):
-            if self.label[i] == 1:
-                self.condition = "analog"
-            else:
-                self.condition = "Non-analog"
             
-            if self.condition == "analog":
-                if self.producedForcesT[i] >= self.threshold-0.01 and self.producedForcesT[i]<= self.threshold+0.01:
-                    thresholdCountAna +=1
-            elif self.condition=="Non-analog":
-                if self.producedForcesT[i] >= self.threshold-0.01 and self.producedForcesT[i]<= self.threshold+0.01:
-                    thresholdCountNAna +=1
+            if self.producedForcesT[i] >= self.threshold-0.01 and self.producedForcesT[i]<= self.threshold+0.01:
+                if self.label[i] ==1:
+                        thresholdCountAna +=1
+                elif self.label[i] == 0:
+                        thresholdCountNAna +=1
         return np.average(self.producedSoundsT),np.average(amplitude),zeroCount,[thresholdCountAna,thresholdCountNAna]
     
     
@@ -414,14 +409,24 @@ def runExperiment(epochs,condition,noise,learningRate,memory,threshold,runs,age,
 
 
 #non analog young baby experiment now only starts with nonanalog
+#BaseValues: everything that is different means a change for the experiement, should always be the same for both runs of one age except for condition
+epochs = 4800
+strength = 0.4
+memory = 3
+learningRate = 0.005
+threshold = 0.16
+actuaryNoise = 0.05
+sensoryNoise = 0.1
+runs = 5
+lossWeights = [1.5,0.5,1.0]
 # params: epochs,condition,noise,learningRate,memory,threshold,runs,age,sensorNoise,lossWeights,strength
-nonAnalogYoung  = runExperiment(4800,"Non-analog", 0.05, 0.001,1,0.16,1,"young",0.15,[1.0,1.0,1.0],0.4)
+nonAnalogYoung  = runExperiment(epochs,"Non-analog", actuaryNoise*4, learningRate,1,threshold,runs,"young",sensoryNoise*2,[1.0,1.0,1.0],strength)
 # analog young baby experiment
-analogYoung = runExperiment(4800,"analog", 0.05, 0.001,1,0.16,1,"young",0.15,[1.0,1.0,1.0],0.4)
+analogYoung = runExperiment(epochs,"analog", actuaryNoise*4, learningRate,1,threshold,runs,"young",sensoryNoise*2,[1.0,1.0,1.0],strength)
 #non analog old baby experiment
-nonAnalogOld = runExperiment(4800,"Non-analog", 0.02, 0.001,3,0.16,1,"old",0.05,[1.0,1.0,1.0],0.4)
+nonAnalogOld = runExperiment(epochs,"Non-analog", actuaryNoise, learningRate,memory,threshold,runs,"old",sensoryNoise,lossWeights,strength)
 # analog old baby experiment
-analogOld = runExperiment(4800,"analog", 0.02, 0.001,3,0.16,1,"old",0.05,[1.0,1.0,1.0],0.4)
+analogOld = runExperiment(epochs,"analog", actuaryNoise, learningRate,memory,threshold,runs,"old",sensoryNoise,lossWeights,strength)
 
 #prints of the results
 
