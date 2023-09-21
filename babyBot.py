@@ -235,7 +235,7 @@ class  BabyBot(pl.LightningModule):
                 regulatedForce = regulatedForce*0+torch.rand(1).float().cuda() #sound does not depend on force
                 self.leftOverSoundCounter = 100
             else:
-                if self.leftOverSoundCounter >= 0:
+                if self.leftOverSoundCounter <= 0:
                     regulatedForce = regulatedForce*0#torch.tensor([0.0],requires_grad=True).float().cuda()
                 else:
                     regulatedForce = regulatedForce*0+torch.rand(1).float().cuda()
