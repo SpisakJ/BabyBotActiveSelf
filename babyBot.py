@@ -350,7 +350,7 @@ class  BabyBot(pl.LightningModule):
                 zeroCount+=1
         for i in range (len( self.producedForcesT)):
             
-            if self.producedForcesT[i] >= self.threshold-0.01 and self.producedForcesT[i]<= self.threshold+0.01:
+            if self.producedForcesT[i] >= self.threshold-0.05 and self.producedForcesT[i]<= self.threshold+0.05:
                 if self.label[i] ==1:
                         thresholdCountAna +=1
                 elif self.label[i] == 0:
@@ -411,8 +411,8 @@ def runExperiment(epochs,condition,noise,learningRate,memory,threshold,runs,age,
 #non analog young baby experiment now only starts with nonanalog
 #BaseValues: everything that is different means a change for the experiement, should always be the same for both runs of one age except for condition
 epochs = 4800
-strength = 0.4
-memory = 3
+strength = 0.65
+memory = 5
 learningRate = 0.005
 threshold = 0.16
 actuaryNoise = 0.05
@@ -420,9 +420,9 @@ sensoryNoise = 0.1
 runs = 5
 lossWeights = [1.5,0.5,1.0]
 # params: epochs,condition,noise,learningRate,memory,threshold,runs,age,sensorNoise,lossWeights,strength
-nonAnalogYoung  = runExperiment(epochs,"Non-analog", actuaryNoise*4, learningRate,1,threshold,runs,"young",sensoryNoise*2,[1.0,1.0,1.0],strength)
+nonAnalogYoung  = runExperiment(epochs,"Non-analog", actuaryNoise*1, learningRate,1,threshold,runs,"young",sensoryNoise*1,[0.0,1.0,1.0],strength)
 # analog young baby experiment
-analogYoung = runExperiment(epochs,"analog", actuaryNoise*4, learningRate,1,threshold,runs,"young",sensoryNoise*2,[1.0,1.0,1.0],strength)
+analogYoung = runExperiment(epochs,"analog", actuaryNoise*1, learningRate,1,threshold,runs,"young",sensoryNoise*1,[0.0,1.0,1.0],strength)
 #non analog old baby experiment
 nonAnalogOld = runExperiment(epochs,"Non-analog", actuaryNoise, learningRate,memory,threshold,runs,"old",sensoryNoise,lossWeights,strength)
 # analog old baby experiment
