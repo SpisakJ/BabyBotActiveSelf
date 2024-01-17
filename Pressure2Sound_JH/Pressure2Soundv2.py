@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 import numpy as np
 import matplotlib.pyplot as plt
-import sounddevice as sd
+#import sounddevice as sd
 
 
 class Pacifier:
@@ -64,19 +64,19 @@ class Pacifier:
         phase = np.cumsum(2 * np.pi * modulation_frequency / sample_rate)
         waveform = np.sin(phase)
         
-        sd.play(waveform, sample_rate)
-        sd.wait()
+        #sd.play(waveform, sample_rate)
+        #sd.wait()
     
     def map_pressure_to_frequency(self, pressures, times, condition='analog'):
         frq_log = []
         
         if condition == "analog":
             for pressure in pressures:
-                frequency = pac.map_pressure_to_frequency_proportional(pressure)
+                frequency = self.map_pressure_to_frequency_proportional(pressure)
                 frq_log.append(frequency)
         elif condition == "non-analog":
             for i in range(pressures.shape[0]):
-                frequency = pac.map_pressure_to_frequency_rand(pressures[i], times[i])
+                frequency = self.map_pressure_to_frequency_rand(pressures[i], times[i])
                 frq_log.append(frequency)
         
         return np.array(frq_log)
