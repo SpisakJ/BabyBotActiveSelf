@@ -10,6 +10,8 @@ import torch
 import pytorch_lightning as pl
 from torch.utils.data import Dataset, DataLoader
 
+from Pressure2Sound_JH import Pressure2Soundv2
+
 #importing numpy for some maths such as sinus curve
 import numpy as np
 
@@ -88,10 +90,10 @@ class  BabyBot(pl.LightningModule):
         self.condition = condition
         
         #the past sound, we start with a random value between 0 and 1
-        self.pastSounds = torch.rand(memory,requires_grad=True).float().cuda()
+        self.pastSounds = torch.rand(memory,requires_grad=True).float()
         
         #our oral activity mdoel
-        self.oralActivity = oralActivity(self.memory).cuda()
+        self.oralActivity = oralActivity(self.memory)
         
         #our sound prediction model
         self.soundPredictionModel = soundPrediction()
@@ -129,6 +131,11 @@ class  BabyBot(pl.LightningModule):
         #this is so that in non anlog condition next timesteps after being over threshold still make sound
         self.leftOverSoundCounter = 100
         
+    def mapToReal(self):
+        
+        pacifier = Pressure2Soundv2.Pacifier()
+        
+        return pacifier.map_pressure_to_frequency(self.producedForcesT, len(self.producedForcesT)/2)
     #models time passed important for instinct
     def timestep(self):
         self.time += self.fq 
@@ -136,7 +143,7 @@ class  BabyBot(pl.LightningModule):
         
     #an instinct towards sucking here modeled with a sinus function multiplied by a strength factor
     def instinct(self):
-        return torch.tensor([(np.sin(self.time)+1)/2]).double().cuda() *self.strength#between 0 and 1, using sinus function not sure if fitting for instinct better functions might exist
+        return torch.tensor([(np.sin(self.time)+1)/2]).double()*self.strength#between 0 and 1, using sinus function not sure if fitting for instinct better functions might exist
     
     #function that uses our model for oral activity
     def regulateSucking(self):
@@ -148,7 +155,7 @@ class  BabyBot(pl.LightningModule):
     def addSoundToPastSounds(self,sound):
         pastSounds = self.pastSounds[1:]
         pastSounds = torch.cat((pastSounds,sound))
-        self.pastSounds = pastSounds.cuda()
+        self.pastSounds = pastSounds
         
     #calculates sound from force. im only using this during eval as it made the tracing harder. It should be adjusted so it can be used in train step as well    
     def forceToSound(self,force):
@@ -159,10 +166,10 @@ class  BabyBot(pl.LightningModule):
                 sound = torch.tensor([0.0],requires_grad=True).float()
         elif self.condition == "Non-analog":
             if force > self.threshold:
-                sound = force*0+torch.rand(1).float().cuda() #sound does not depend on force
+                sound = force*0+torch.rand(1).float() #sound does not depend on force
             else:
                 sound = torch.tensor([0.0],requires_grad=True).float()
-        sound = torch.tensor([sound]).cuda()
+        sound = torch.tensor([sound])
         self.addSoundToPastSounds(sound)
         return sound
     #uses the prediction model to predict sound from current force
@@ -182,7 +189,7 @@ class  BabyBot(pl.LightningModule):
     
     # adds noise to the force we get a random value multiply it by 2 and subtract it from 1 to get values between -1 and 1
     def suckingNoise(self,force): #this models the inaccuracy of the baby in regulating sucking force
-        return force + (1-torch.rand(1).cuda()*2)*self.noise
+        return force + (1-torch.rand(1)*2)*self.noise
     
     #this function does the actual training
     def training_step(self,batch):
@@ -232,13 +239,13 @@ class  BabyBot(pl.LightningModule):
                 regulatedForce = regulatedForce*0#torch.tensor([0.0],requires_grad=True).float().cuda()
         elif self.condition == "Non-analog":
             if regulatedForce > self.threshold:
-                regulatedForce = regulatedForce*0+torch.rand(1).float().cuda() #sound does not depend on force
+                regulatedForce = regulatedForce*0+torch.rand(1).float() #sound does not depend on force
                 self.leftOverSoundCounter = 100
             else:
                 if self.leftOverSoundCounter <= 0:
                     regulatedForce = regulatedForce*0#torch.tensor([0.0],requires_grad=True).float().cuda()
                 else:
-                    regulatedForce = regulatedForce*0+torch.rand(1).float().cuda()
+                    regulatedForce = regulatedForce*0+torch.rand(1).float()
                     self.leftOverSoundCounter -= 1
         
         #now we know the true sound which is still called regulated force here and find the prediction loss between it and our predicted sound
@@ -263,7 +270,7 @@ class  BabyBot(pl.LightningModule):
         
         #we update the past sound with the current sound
         with torch.no_grad():
-            self.pastSounds = torch.cat((self.pastSounds,torch.tensor([regulatedForce.item()]).cuda()+self.sensoryNoise))
+            self.pastSounds = torch.cat((self.pastSounds,torch.tensor([regulatedForce.item()])+self.sensoryNoise))
             self.pastSounds  = self.pastSounds[1:]
         #self.pastSounds = torch.tensor([regulatedForce.item()]).cuda()+self.sensoryNoise
         #we record the current sound so that we can display the sounds created during training at a later time.
@@ -393,18 +400,19 @@ def runExperiment(epochs,condition,noise,learningRate,memory,threshold,runs,age,
         #sets up the babybot, here the parameters are decided
         myModel = BabyBot(condition=condition,noise=noiseRange[i],lr=learningRate,memory=memory,
                           threshold=threshold,age=age,sensoryNoise=sensoryNoiseRange[i],lossWeigths=lossWeights,strength=strength)
-        trainer = pl.Trainer(max_epochs=epochs,)
+        trainer = pl.Trainer("cpu",max_epochs=epochs,)
         trainer.fit(model=myModel)   
         
         #call funciton of the model to disply some results
         avg,amp,z,t = myModel.showBehaviour()    
+        freq = myModel.mapToReal()
         
         #record results so that we can create the average of the runs 
         averageSound.append(avg)
         averageAmp.append(amp)
         zeros.append(z)
         thresholdHit.append(t)
-    return ["averageSound",np.average(averageSound),"averageAmplitude",np.average(averageAmp),"averageZeros",np.average(zeros),"TresholdHits [Analog,NonAnalog]",thresholdHit]
+    return ["averageSound",np.average(averageSound),"averageAmplitude",np.average(averageAmp),"averageZeros",np.average(zeros),"TresholdHits [Analog,NonAnalog]",thresholdHit],freq
 
 
 
@@ -417,16 +425,16 @@ learningRate = 0.005
 threshold = 0.16
 actuaryNoise = 0.05
 sensoryNoise = 0.1
-runs = 5
+runs = 1
 lossWeights = [1.5,0.5,1.0]
 # params: epochs,condition,noise,learningRate,memory,threshold,runs,age,sensorNoise,lossWeights,strength
-nonAnalogYoung  = runExperiment(epochs,"Non-analog", actuaryNoise*1, learningRate,1,threshold,runs,"young",sensoryNoise*1,[0.0,1.0,1.0],strength)
+nonAnalogYoung,fr1  = runExperiment(epochs,"Non-analog", actuaryNoise*1, learningRate,1,threshold,runs,"young",sensoryNoise*1,[0.0,1.0,1.0],strength)
 # analog young baby experiment
-analogYoung = runExperiment(epochs,"analog", actuaryNoise*1, learningRate,1,threshold,runs,"young",sensoryNoise*1,[0.0,1.0,1.0],strength)
+analogYoung,fr2 = runExperiment(epochs,"analog", actuaryNoise*1, learningRate,1,threshold,runs,"young",sensoryNoise*1,[0.0,1.0,1.0],strength)
 #non analog old baby experiment
-nonAnalogOld = runExperiment(epochs,"Non-analog", actuaryNoise, learningRate,memory,threshold,runs,"old",sensoryNoise,lossWeights,strength)
+nonAnalogOld,fr3 = runExperiment(epochs,"Non-analog", actuaryNoise, learningRate,memory,threshold,runs,"old",sensoryNoise,lossWeights,strength)
 # analog old baby experiment
-analogOld = runExperiment(epochs,"analog", actuaryNoise, learningRate,memory,threshold,runs,"old",sensoryNoise,lossWeights,strength)
+analogOld,fr4 = runExperiment(epochs,"analog", actuaryNoise, learningRate,memory,threshold,runs,"old",sensoryNoise,lossWeights,strength)
 
 #prints of the results
 
@@ -434,6 +442,13 @@ print("Old Baby, NonAnalog Start: ",nonAnalogOld)
 print("Old Baby Analog Start:  ",analogOld)      
 print("Young Baby NonAnalog Start: ",nonAnalogYoung)
 print("Young Baby Analog Start:",analogYoung)  
+
+plt.plot(fr1)
+plt.show()
+plt.plot(fr2)
+plt.show()
+plt.plot(fr3)
+plt.show()
+plt.plot(fr4)
+plt.show()
 #%%
-'''
-'''
