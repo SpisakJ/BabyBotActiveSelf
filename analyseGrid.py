@@ -1,29 +1,35 @@
 import pandas as pd
 import numpy as np
 from ast import literal_eval
-df = pd.read_csv("Combined.csv", converters={"NAt": literal_eval, "At": literal_eval})
+df = pd.read_csv("Combined.csv")
 
+df2 = df[["exp","pred","exh","mem","stre","actu","sens","NAt","NNt","AAt","ANt"]]
+
+print(df2.corr(min_periods=3))
+#%%
 
 avgA = [0,0]
 avgN = [0,0]
 count = 0
-exp = [0,1,2]
+exp = [0]
 pred = [0,1,2]
-exh = [0,1,2]
+exh = [2]
 mem = [1,5]
-stre = [0.25,0.45,0.64]
-actu = [0.05,0.1,0.2]
-sens = [0.05,0.1,0.2]
+stre = [0.65]
+actu = [0.2]
+sens = [0.2]
 for rowA,rowN in zip(df.loc[(df["exp"].isin(exp)) & (df["pred"].isin(pred)) & (df["exh"].isin(exh)) & (df["mem"].isin(mem)) & (df["stre"].isin(stre)) & (df["actu"].isin(actu)) & (df["sens"].isin(sens))]["NAt"] ,
-                     df.loc[(df["exp"].isin(exp)) & (df["pred"].isin(pred)) & (df["exh"].isin(exh)) & (df["mem"].isin(mem)) & (df["stre"].isin(stre)) & (df["actu"].isin(actu)) & (df["sens"].isin(sens))]["At"]):
+                     df.loc[(df["exp"].isin(exp)) & (df["pred"].isin(pred)) & (df["exh"].isin(exh)) & (df["mem"].isin(mem)) & (df["stre"].isin(stre)) & (df["actu"].isin(actu)) & (df["sens"].isin(sens))]["AAt"]):
     count+=1
     avgA[0] += rowA[0]
     avgA[1] += rowA[1]
     avgN[0] += rowN[0]
     avgN[1] += rowN[1]
-
 print(count)
 print([avgA[0]/count,avgA[1]/count],[avgN[0]/count,avgN[1]/count])
+if count != 486 and count != 729 and count != 1458 :
+    print("WARNING some typo")
+
 #[414.1639231824417, 277.14334705075447] [678.0946502057614, 135.08641975308643] this is base line avg over all
 #[531.7201646090535, 272.24074074074076] [774.7448559670781, 128.85802469135803] if exp is 2
 #[406.98148148148147, 270.2098765432099] [673.858024691358, 133.119341563786] if pred is 2
@@ -46,8 +52,8 @@ print([avgA[0]/count,avgA[1]/count],[avgN[0]/count,avgN[1]/count])
 #[622.4711934156379, 309.4835390946502] [1036.8106995884773, 151.63991769547326] if stre is 0.45
 #[226.68312757201647, 330.1008230452675] [294.61316872427983, 164.43621399176953] if stre is 0.65
 
-#[748.9320987654321, 298.0308641975309] [1300.8148148148148, 143.44753086419752] if actu is 0.05
-#[480.22222222222223, 254.17592592592592] [797.9166666666666, 124.73148148148148] if actu is 0.1
+#[585.366255144033, 307.38271604938274] [979.7283950617284, 151.65843621399176] if actu is 0.05
+#[398.917695473251, 280.059670781893] [622.0946502057614, 138.5411522633745] if actu is 0.1
 #[294.55864197530866, 199.78703703703704] [510.7746913580247, 93.05555555555556] if actu is 0.2
 
 ##=> higher exp means higher analog threshold hits

@@ -5,6 +5,7 @@ Created on Mon Jun 26 11:26:00 2023
 
 @author: spisak
 """
+#%%
 #import torch and pytorch_lightning for machine learning
 import torch
 import pytorch_lightning as pl
@@ -18,7 +19,7 @@ import numpy as np
 
 #import matplotlib for graph plotting
 import matplotlib.pyplot as plt
-#%%
+
 #dataset that produces dummies as we need it for the torch lightning module
 class Infinite(Dataset):
 
@@ -123,7 +124,7 @@ class  BabyBot(pl.LightningModule):
         self.sensoryNoise = sensoryNoise
         
         #how long we train on one condition
-        self.conditionLength = 5400*1/6
+        self.conditionLength = 5600*1/6
         
         #to weigh losses differently
         self.lossWeigths = lossWeigths
@@ -140,6 +141,11 @@ class  BabyBot(pl.LightningModule):
         return self.producedForcesT#pacifier.map_pressure_to_frequency(self.producedForcesT, len(self.producedForcesT)/10)
     
     def realBack(self,desiredPressure):
+            
+        if self.time*10 < self.conditionLength:
+            return torch.tensor(0)
+        if self.time*10 > self.conditionLength*5:
+            return torch.tensor(0)
         self.pacifier.run(desiredPressure,self.condition,100)
         return self.pacifier.frequency
         
@@ -223,7 +229,7 @@ class  BabyBot(pl.LightningModule):
         
         
         #record produced force
-        self.producedForcesT.append(regulatedForce2/400 )
+        self.producedForcesT.append(regulatedForce2/400)
         
         #we calculate exhaustion which is how different the sucking force is from the instinct, perhaps this should only work if its higher than instinct 
         exhaustion = self.mseLoss(regulatedForce.to(self.device),instinctForce.float().to(self.device))#abs(regulatedForce-instinctForce)
@@ -236,6 +242,7 @@ class  BabyBot(pl.LightningModule):
                     self.condition= "non-analog"
                 elif self.condition=="non-analog":
                     self.condition="analog"
+        print(self.condition)
             
         
         #basicly the force to sound function but adjusted and copied here to make back propagation easier 
@@ -285,7 +292,7 @@ class  BabyBot(pl.LightningModule):
             self.pastSounds  = self.pastSounds[1:]
         #self.pastSounds = torch.tensor([regulatedForce.item()]).cuda()+self.sensoryNoise
         #we record the current sound so that we can display the sounds created during training at a later time.
-        self.producedSoundsT.append(regulatedForce.item())
+        self.producedSoundsT.append(regulatedForce2/400)
         if self.condition == "analog":
             self.label.append(1)
         else:
@@ -474,28 +481,29 @@ def gridSearch():
                                 endTime = time.time()
                                 print(endTime-startTime)
     return results
-gridResults = gridSearch()
-import pandas as pd
-df = pd.DataFrame(gridResults)
-df.to_csv("./gridResCSV.csv")
+
+#gridResults = gridSearch()
+#import pandas as pd
+#df = pd.DataFrame(gridResults)
+#df.to_csv("./gridResCSV.csv")
 
 #non analog young baby experiment now only starts with nonanalog
 #BaseValues: everything that is different means a change for the experiement, should always be the same for both runs of one age except for condition
-#epochs = 800
-#strength = 0.65
-#memory = 5
-#learningRate = 0.005
-#threshold = 0.16
-#actuaryNoise = 0.05
-#sensoryNoise = 0.1
-#runs = 1
-#lossWeights = [1.5,0.5,1.0]
+epochs = 5600
+strength = 0.45
+memory = 1
+learningRate = 0.005
+threshold = 0.16
+actuaryNoise = 0.1
+sensoryNoise = 0.1
+runs = 1
+lossWeights = [1.,1.,1.0]
 # params: epochs,condition,noise,learningRate,memory,threshold,runs,age,sensorNoise,lossWeights,strength
-#nonAnalogYoung,fr1  = runExperiment(epochs,"non-analog", actuaryNoise*1, learningRate,1,threshold,runs,"young",sensoryNoise*1,[0.0,1.0,1.0],strength)
+nonAnalogYoung,fr1  = runExperiment(epochs,"analog", actuaryNoise*1, learningRate,memory,threshold,runs,"young",sensoryNoise*1,[0.0,1.0,1.0],strength)
 # analog young baby experiment
 #analogYoung,fr2 = runExperiment(epochs,"analog", actuaryNoise*1, learningRate,1,threshold,runs,"young",sensoryNoise*1,[0.0,1.0,1.0],strength)
 #non analog old baby experiment
-#nonAnalogOld,fr3 = runExperiment(epochs,"non-analog", actuaryNoise, learningRate,memory,threshold,runs,"old",sensoryNoise,lossWeights,strength)
+nonAnalogOld,fr3 = runExperiment(epochs,"analog", actuaryNoise, learningRate,memory,threshold,runs,"old",sensoryNoise,lossWeights,strength)
 # analog old baby experiment
 #analogOld,fr4 = runExperiment(epochs,"analog", actuaryNoise, learningRate,memory,threshold,runs,"old",sensoryNoise,lossWeights,strength)
 
@@ -506,11 +514,11 @@ df.to_csv("./gridResCSV.csv")
 #print("Young Baby nonAnalog Start: ",nonAnalogYoung)
 #print("Young Baby Analog Start:",analogYoung)  
 
-#plt.plot(fr1)
-#plt.show()
+plt.plot(fr1)
+plt.show()
 #plt.plot(fr2)
-#plt.show()
-#plt.plot(fr3)
+plt.show()
+plt.plot(fr3)
 #plt.show()
 #plt.plot(fr4)
 #plt.show()
