@@ -71,6 +71,8 @@ class Pacifier:
             # k_I = (np.tanh(80*err)+1)*(0.008+self.F_noise)
             k_I = (np.tanh(80*err)+1)*(0.008+self.F_noise) * (self.dt/0.001)
             F_u = k_I*self.err_int
+            # k_I = (np.tanh(80*err)+1)*(0.008) * (self.dt/0.001)
+            # F_u = k_I*self.err_int+self.F_noise*200
 
             F = self.F + 1*(F_u-self.F)
         else:
@@ -78,6 +80,8 @@ class Pacifier:
             self.F_noise = 0
             self.err_int = 0
             F = self.F + 1*(F_u-self.F)
+
+        F = max(min(F, 10), -10)
 
         # perform one step & update states
         self.F = F
