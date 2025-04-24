@@ -69,7 +69,7 @@ class Pacifier:
 
         if x_target > 0.05:
             # k_I = (np.tanh(80*err)+1)*(0.008+self.F_noise)
-            k_I = (np.tanh(80*err)+1)*(0.008+self.F_noise) * (self.dt/0.001)
+            k_I = (np.tanh(80*abs(err))+1)*(0.008+self.F_noise) * (self.dt/0.001)
             F_u = k_I*self.err_int
             # k_I = (np.tanh(80*err)+1)*(0.008) * (self.dt/0.001)
             # F_u = k_I*self.err_int+self.F_noise*200
@@ -218,13 +218,15 @@ class Pacifier:
         axs.plot(time_points, self.x_desired_log, label=r'$x_{\rm des}$', color="orange")
         axs.axhline(y=0.1, color='r', linestyle='--', label=r'$x_{\rm thr}$')
         axs.set_ylabel('Pressure (psi)')
-        axs.set_ylim([-0.1, 1.1])
+        # axs.set_ylim([-0.1, 1.1])
+        axs.set_ylim([-0.1, 0.7])
         axs.legend()
         axs.grid(True)
-        axs.set_xlim((time_points[0], time_points[-1]))
+        # axs.set_xlim((time_points[0], time_points[-1]))
+        axs.set_xlim((0, 13.5))
         axs.set_xlabel('Time (s)')
         plt.tight_layout()
-        plt.savefig('/home/jheidersberger/Documents/Projects/BabyBotActiveSelf/Pressure2Sound_JH/BioMdl_result.pdf')
+        plt.savefig('/home/jheidersberger/Documents/Projects/BabyBotActiveSelf/Pressure2Sound_JH/BioMdl_result_2.pdf')
 
     # def play_dynamic_pitch(self):
     #     """

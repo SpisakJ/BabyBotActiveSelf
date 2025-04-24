@@ -1,8 +1,9 @@
 # Pressure2Sound Functions
 
-The `Pressure2Soundv3.py` file contains several functions to simulate the pressure and map the pressure to sound frequencies. Below is an overview of these functions:
+The `Pressure2Soundv6.py` file contains several functions to simulate the pressure and map the pressure to sound frequencies. Below is an overview of these functions:
 
 ## Table of Contents
+1. [init](#__init__)
 1. [step_mass_spring_damper](#step_mass_spring_damper)
 2. [map_pressure_to_frequency](#map_pressure_to_frequency)
     - [map_pressure_to_frequency_proportional](#map_pressure_to_frequency_proportional)
@@ -10,6 +11,17 @@ The `Pressure2Soundv3.py` file contains several functions to simulate the pressu
 3. [run](#run)
 4. [visualize_system](#visualize_system)
 5. [play_dynamic_pitch](#play_dynamic_pitch)
+
+
+---
+
+### 0. __init__
+
+- **Usage**: Initializes model parameters and precomputes discrete-time matrices.
+- **Parameters**: 
+    - `condition`: Codntion used to map pressure to sound pitch `analog` or `non-analog`.
+    - `dt`: fixed timestep for simulation
+- **Returns**: None
 
 ---
 
