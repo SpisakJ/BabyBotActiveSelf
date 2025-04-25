@@ -11,7 +11,7 @@ class Pacifier:
         # for analog condition
         self.pressure_range = (0, 1)
         self.frequency_range = (0, 400)
-        self.pressure_threshold = 0.1  # Pressure threshold for producing sound
+        self.pressure_threshold = 0.16  # Pressure threshold for producing sound
 
         # for non-analog condition
         self.trill_t0 = 0.0
