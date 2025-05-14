@@ -1,8 +1,10 @@
 import numpy as np
 import matplotlib.pyplot as plt
+# import sounddevice as sd
+from mpmath import *
 
 class Pacifier:
-    def __init__(self, condition="analog"):
+    def __init__(self, condition="analog", dt=0.01):
         
         self.condition = condition
         
@@ -29,13 +31,12 @@ class Pacifier:
         self.time = 0.0
 
         # system settings
-        self.m = 1
-        self.k = 15
-        self.d = 1.5*np.sqrt(self.m*self.k)
-        self.equ_noise = 0
-        self.x_desired_noise = 0
-        self.F_noise = 0
-        self.dt = 0.1
+        self.dt = dt
+        # first-order nonlinear damping model constants
+        self.k     = 20.0       # “stiffness” toward desired pressure
+        self.d0    = 1.0       # baseline damping
+        self.kd    = 10.0       # damping gets larger at low P
+        self.dd    = 10
 
         # data logging
         self.x_log = np.array([self.x])
@@ -53,48 +54,17 @@ class Pacifier:
             x_desired : float
                 Desired position (= desired pressure) as input to the dynamical system 
         """
-
-        if x_desired != self.x_desired_log[-1]:
-            self.x_desired_noise = np.random.normal(0, 0.01, 1)
-            self.equ_noise = np.random.normal(-0.01, 0.01, 1)
         
-        if self.F_noise == 0:
-            self.F_noise = np.random.normal(0.006,0.006/2,1)
-        
-        x_target = x_desired + self.x_desired_noise
-        
-        err = (x_target-self.x)
-        self.err_int = self.err_int + err
+        # new 1st-order update with P-dependent damping
+        d_var = self.d0 + self.kd*sech(self.x * self.dd)
+        dx    = (self.k*(x_desired - self.x)/d_var) * self.dt
+        self.x += dx
+        self.time += self.dt
 
-        if x_target > 0.05:
-            # k_I = (np.tanh(80*err)+1)*(0.008+self.F_noise)
-            k_I = (np.tanh(80*err)+1)*(0.008+self.F_noise) * (self.dt/0.001)
-            F_u = k_I*self.err_int
-            # k_I = (np.tanh(80*err)+1)*(0.008) * (self.dt/0.001)
-            # F_u = k_I*self.err_int+self.F_noise*200
-
-            F = self.F + 1*(F_u-self.F)
-        else:
-            F_u = 0
-            self.F_noise = 0
-            self.err_int = 0
-            F = self.F + 1*(F_u-self.F)
-
-        F = max(min(F, 15), -15)
-
-        # perform one step & update states
-        self.F = F
-        self.a = (F + self.d*(0-self.v) + self.k*(self.equ_noise-self.x)) / self.m
-        self.v = self.v + self.a*self.dt
-        self.x = self.x + self.v*self.dt
-        self.step = self.step +1
-        self.time = self.step*self.dt
-
-        # log data
-        self.x_log = np.append(self.x_log, self.x)
-        self.F_log = np.append(self.F_log, self.F)
-        self.x_desired_log = np.append(self.x_desired_log, x_desired)
-        self.time_log = np.append(self.time_log, self.time)
+        # log
+        self.x_log          = np.append(self.x_log, self.x)
+        self.x_desired_log  = np.append(self.x_desired_log, x_desired)
+        self.time_log       = np.append(self.time_log, self.time)
     
     def map_pressure_to_frequency(self, pressure):
         """
@@ -136,7 +106,7 @@ class Pacifier:
 
             # Ensure the index is within the bounds of the array
             if frequ_index >= self.n_trills:
-                frequ_index = self.n_trills-1
+                frequ_index = self.n_trills - 1
 
             # Select the frequency
             self.frequency = self.trill_freq[frequ_index]
@@ -158,14 +128,12 @@ class Pacifier:
             frequency_min, frequency_max = self.frequency_range
             pressure = max(min(pressure, pressure_max), pressure_min)  # Clamp pressure within range
             self.frequency = ((pressure - pressure_min) / (pressure_max - pressure_min)) * (frequency_max - frequency_min) + frequency_min
-            if not isinstance(self.frequency, float):
-                self.frequency = self.frequency[0]
         else:
             self.frequency = 0.0
             
         self.frequency_log = np.append(self.frequency_log, self.frequency)
     
-    def run(self, desired_pressure,condition="analog", steps=1):
+    def run(self, desired_pressure, steps=1):
         """
             Simulate the pacifier using a mass sping damper system and the analog/non-analog condition.
 
@@ -176,7 +144,6 @@ class Pacifier:
             steps : int, optional
                 The number of steps to perform the simulation for
         """
-        self.condition = condition
 
         for iter in range(steps):
             self.step_mass_spring_damper(x_desired=desired_pressure)
@@ -187,59 +154,28 @@ class Pacifier:
             Plot pressure, force and frequencies.
         """
 
-        # # Initialize subplots
-        # fig, axs = plt.subplots(3, 1, figsize=(10, 6))
-        # time_points = np.arange(len(self.x_log)) * self.dt
-
-        # axs[0].plot(time_points, self.x_log, label='x', color="blue")
-        # axs[0].plot(time_points, self.x_desired_log, label='x_desired', color="orange")
-        # axs[0].axhline(y = 0.1, color = 'r', linestyle = '--')
-        # axs[0].set_ylabel('Pressure (psi)')
-        # axs[0].set_ylim([-0.1, 1.1])
-        
-        # axs[1].plot(time_points, self.F_log, label='F', color="blue")
-        # axs[1].set_ylabel('Force')
-        # axs[1].set_xlabel('Time (s)')
-
-        # axs[2].plot(time_points, self.frequency_log, label='freq', color="blue")
-        # axs[2].set_ylabel('frequency (Hz)')
-        # axs[2].set_xlabel('Time (s)')
-
-        # for ax in axs:
-        #     ax.legend()
-        #     ax.grid(True)
-
-        # plt.show()
-
         # Initialize subplots
         fig, axs = plt.subplots(1, 1, figsize=(5, 3))  # Corrected to plt.subplots
 
         time_points = np.arange(len(self.x_log)) * self.dt
 
-        axs[0].plot(time_points, self.x_log, label='x', color="blue")
-        axs[0].plot(time_points, self.x_desired_log, label='x_desired', color="orange")
-        axs[0].axhline(y = 0.1, color = 'r', linestyle = '--')
-        axs[0].set_ylabel('Pressure (psi)')
-        axs[0].set_ylim([-0.1, 0.7])
-        
-        axs[1].plot(time_points, self.F_log, label='F', color="blue")
-        axs[1].set_ylabel('Force')
-        axs[1].set_xlabel('Time (s)')
-
-        axs[2].plot(time_points, self.frequency_log, label='freq', color="blue")
-        axs[2].set_ylabel('frequency (Hz)')
-        axs[2].set_xlabel('Time (s)')
-
-        for ax in axs:
-            ax.legend()
-            ax.grid(True)
-
+        axs.plot(time_points, self.x_log, label=r'$x$', color="blue")
+        axs.plot(time_points, self.x_desired_log, label=r'$x_{\rm des}$', color="orange")
+        axs.axhline(y=0.1, color='r', linestyle='--', label=r'$x_{\rm thr}$')
+        axs.set_ylabel('Pressure (psi)')
+        # axs.set_ylim([-0.1, 1.1])
+        # axs.set_ylim([-0.1, 0.7])
+        axs.legend()
+        axs.grid(True)
+        # axs.set_xlim((time_points[0], time_points[-1]))
+        # axs.set_xlim((0, 13.5))
+        axs.set_xlabel('Time (s)')
+        plt.tight_layout()
+        plt.savefig('/home/jheidersberger/Documents/Projects/BabyBotActiveSelf/Pressure2Sound_JH/BioMdl_result_2.pdf')
         plt.show()
-    
 
 if __name__ == "__main__":
-    pac_env = Pacifier(condition="non-analog")
-    pac_env.dt = 0.1
+    pac_env = Pacifier(condition="non-analog", dt=0.01)
 
     duration = 1.22
     pac_env.run(desired_pressure=0, steps=int(duration/pac_env.dt))
@@ -283,8 +219,11 @@ if __name__ == "__main__":
     duration = 2.25
     pac_env.run(desired_pressure=0, steps=int(duration/pac_env.dt))
 
-    duration = 2.5
+    duration = 5.5
     pac_env.run(desired_pressure=0.9, steps=int(duration/pac_env.dt))
+
+    duration = 7.5
+    pac_env.run(desired_pressure=0.0, steps=int(duration/pac_env.dt))
 
     pac_env.visualize_system()
 

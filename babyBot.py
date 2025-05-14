@@ -14,13 +14,14 @@ from torch.utils.data import Dataset, DataLoader
 import seaborn as sns
 from Pressure2Sound_JH import Pressure2Soundv2
 from Pressure2Sound_JH import Pressure2Soundv3
+from Pressure2Sound_JH import Pressure2Soundv3
 
 #importing numpy for some maths such as sinus curve
 import numpy as np
 
 #import matplotlib for graph plotting
 import matplotlib.pyplot as plt
-
+#%%
 #dataset that produces dummies as we need it for the torch lightning module
 steps = 5400
 class Infinite(Dataset):
@@ -66,7 +67,7 @@ class soundPrediction(torch.nn.Module):
         return x
     
 class  BabyBot(pl.LightningModule):
-    def __init__(self,suckingFrequency = 0.1, memory = 10, noise=0.1, lr=0.001, condition="analog",threshold=0.1,age="old",sensoryNoise = 0.1,lossWeigths=[1.0,1.0,1.0],strength=0.4,device="cuda"):
+    def __init__(self,suckingFrequency = 0.1, memory = 10, noise=0.1, lr=0.001, condition="analog",threshold=0.1,age="old",sensoryNoise = 0.1,lossWeigths=[1.0,1.0,1.0],strength=0.4,device="cuda",device="cuda"):
         super(BabyBot,self).__init__()
         #age of the baby only used for plotting
         self.age= age
@@ -94,7 +95,7 @@ class  BabyBot(pl.LightningModule):
         self.condition = condition
         
         #the past sound, we start with a random value between 0 and 1
-        self.pastSounds = torch.rand(memory,requires_grad=True).float().to(self.device)
+        self.pastSounds = torch.rand(memory,requires_grad=True).float().to(self.device).to(self.device)
         
         #our oral activity mdoel
         self.oralActivity = oralActivity(self.memory)
@@ -140,6 +141,8 @@ class  BabyBot(pl.LightningModule):
         
         self.pacifier = Pressure2Soundv3.Pacifier()
         
+        self.pacifier = Pressure2Soundv3.Pacifier()
+        
     def mapToReal(self):
         #
         return self.producedForcesT#pacifier.map_pressure_to_frequency(self.producedForcesT, len(self.producedForcesT)/10)
@@ -163,17 +166,18 @@ class  BabyBot(pl.LightningModule):
     #an instinct towards sucking here modeled with a sinus function multiplied by a strength factor
     def instinct(self):
         return torch.tensor([(np.sin(self.time)+1)/2]).double().to(self.device)*self.strength#between 0 and 1, using sinus function not sure if fitting for instinct better functions might exist
+        return torch.tensor([(np.sin(self.time)+1)/2]).double().to(self.device)*self.strength#between 0 and 1, using sinus function not sure if fitting for instinct better functions might exist
     
     #function that uses our model for oral activity
     def regulateSucking(self):
         #the model has the last sound as its input
-        producedForce = self.oralActivity(self.pastSounds.to(self.device))
+        producedForce = self.oralActivity(self.pastSounds.to(self.device).to(self.device))
         return producedForce
     
     #updates past sound
     def addSoundToPastSounds(self,sound):
         pastSounds = self.pastSounds[1:]
-        pastSounds = torch.cat((pastSounds,sound)).to(self.device)
+        pastSounds = torch.cat((pastSounds,sound)).to(self.device).to(self.device)
         self.pastSounds = pastSounds
         
     #calculates sound from force. im only using this during eval as it made the tracing harder. It should be adjusted so it can be used in train step as well    
@@ -184,11 +188,13 @@ class  BabyBot(pl.LightningModule):
             else:
                 sound = torch.tensor([0.0],requires_grad=True).float().to(self.device)
         elif self.condition == "non-analog":
-            if force > self.threshold:
-                sound = force*0+torch.rand(1).float().to(self.device) #sound does not depend on force
-            else:
                 sound = torch.tensor([0.0],requires_grad=True).float().to(self.device)
-        sound = torch.tensor([sound]).to(self.device)
+        elif self.condition == "non-analog":
+            if force > self.threshold:
+                sound = force*0+torch.rand(1).float().to(self.device).to(self.device) #sound does not depend on force
+            else:
+                sound = torch.tensor([0.0],requires_grad=True).float().to(self.device).to(self.device)
+        sound = torch.tensor([sound]).to(self.device).to(self.device)
         self.addSoundToPastSounds(sound)
         return sound
     #uses the prediction model to predict sound from current force
@@ -208,7 +214,7 @@ class  BabyBot(pl.LightningModule):
     
     # adds noise to the force we get a random value multiply it by 2 and subtract it from 1 to get values between -1 and 1
     def suckingNoise(self,force): #this models the inaccuracy of the baby in regulating sucking force
-        return force + (1-torch.rand(1).to(self.device)*2)*self.noise
+        return force + (1-torch.rand(1).to(self.device).to(self.device)*2)*self.noise
     
     #this function does the actual training
     def training_step(self,batch):
@@ -225,7 +231,7 @@ class  BabyBot(pl.LightningModule):
         self.wantedForcesT.append(regulatedForce.item())
         
         #we predict a sound using the prediction model
-        predictedSound = self.soundPrediction(regulatedForce.to(self.device))
+        predictedSound = self.soundPrediction(regulatedForce.to(self.device).to(self.device))
         
         #we add noise with the noise function
         regulatedForce = self.suckingNoise(regulatedForce)
@@ -239,13 +245,16 @@ class  BabyBot(pl.LightningModule):
         self.producedForcesT.append(regulatedForce2/400)
         
         #we calculate exhaustion which is how different the sucking force is from the instinct, perhaps this should only work if its higher than instinct 
-        exhaustion = self.mseLoss(regulatedForce.to(self.device),instinctForce.float().to(self.device))#abs(regulatedForce-instinctForce)
+        exhaustion = self.mseLoss(regulatedForce.to(self.device).to(self.device),instinctForce.float().to(self.device).to(self.device))#abs(regulatedForce-instinctForce)
         
         #TODO change it so we have baseline as another condition
+        #here I want to change the condition based on time to passed to be closer to the original experiement where we have baseline->analog->nonanalog and so on in sequence
         #here I want to change the condition based on time to passed to be closer to the original experiement where we have baseline->analog->nonanalog and so on in sequence
         if self.time*10 > self.conditionLength*2: #*2 because first baseline and then the start condition
             if (self.time*10 -self.conditionLength)% self.conditionLength <= 1:
                 if self.condition=="analog":
+                    self.condition= "non-analog"
+                elif self.condition=="non-analog":
                     self.condition= "non-analog"
                 elif self.condition=="non-analog":
                     self.condition="analog"
@@ -261,8 +270,9 @@ class  BabyBot(pl.LightningModule):
             else:
                 regulatedForce = regulatedForce*0#torch.tensor([0.0],requires_grad=True).float().cuda()
         elif self.condition == "non-analog":
+        elif self.condition == "non-analog":
             if regulatedForce > self.threshold:
-                regulatedForce = regulatedForce*0+torch.rand(1).float().to(self.device) #sound does not depend on force
+                regulatedForce = regulatedForce*0+torch.rand(1).float().to(self.device).to(self.device) #sound does not depend on force
                 self.leftOverSoundCounter = 100
             else:
                 if self.leftOverSoundCounter <= 0:
@@ -272,7 +282,7 @@ class  BabyBot(pl.LightningModule):
                     self.leftOverSoundCounter -= 1
         
         #now we know the true sound which is still called regulated force here and find the prediction loss between it and our predicted sound
-        predictionLoss = self.mseLoss(predictedSound,torch.tensor(regulatedForce2/400).float().to(self.device))
+        predictionLoss = self.mseLoss(predictedSound,torch.tensor(torch.tensor(regulatedForce2/400).float().to(self.device)2/400).float().to(self.device))
         
         #if len(ps) > 1:
         #    ps = ps[-1]
@@ -339,6 +349,7 @@ class  BabyBot(pl.LightningModule):
 '''
 This is the execution, you can change the variables in myModel = BabyBot()
 novelty does not really do anything right now
+condition can be anloag or non-analog and decides on how force is translated into sound.
 condition can be anloag or non-analog and decides on how force is translated into sound.
 noise is how accurate the model can choose the force so its added before the force is translated to sound
 lr is the learning rate of the model
@@ -519,11 +530,11 @@ lossWeights = [1.,1.,1.0] # 0 1 1 young
 # params: epochs,condition,noise,learningRate,memory,threshold,runs,age,sensorNoise,lossWeights,strength
 nonAnalogYoung,fr1  = runExperiment(epochs,"non-analog", actuaryNoise, learningRate,memory,threshold,runs,"young",sensoryNoise,[0.0,1.0,1.0],strength)
 # analog young baby experiment
-analogYoung,fr2 = runExperiment(epochs,"analog", actuaryNoise, learningRate,memory,threshold,runs,"young",sensoryNoise,[0.0,1.0,1.0],strength)
+#analogYoung,fr2 = runExperiment(epochs,"analog", actuaryNoise, learningRate,memory,threshold,runs,"young",sensoryNoise,[0.0,1.0,1.0],strength)
 #non analog old baby experiment
 nonAnalogOld,fr3 = runExperiment(epochs,"non-analog", actuaryNoise, learningRate,memory*5,threshold,runs,"old",sensoryNoise,lossWeights,strength)
 # analog old baby experiment
-analogOld,fr4 = runExperiment(epochs,"analog", actuaryNoise, learningRate,memory*5,threshold,runs,"old",sensoryNoise,lossWeights,strength)
+#analogOld,fr4 = runExperiment(epochs,"analog", actuaryNoise, learningRate,memory*5,threshold,runs,"old",sensoryNoise,lossWeights,strength)
 '''
 '''
 mem 2 instead of 5

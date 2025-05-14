@@ -1,5 +1,6 @@
 # Ignored files
 *.csv
+*.pdf
 /lightning_logs/
 *.zip
 *.ckpt
