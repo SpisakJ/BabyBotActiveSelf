@@ -5,24 +5,33 @@ Created on Mon Jun 26 11:26:00 2023
 
 @author: spisak
 """
+
 #%%
 #import torch and pytorch_lightning for machine learning
 import torch
+import os
 import pytorch_lightning as pl
 from torch.utils.data import Dataset, DataLoader
 
 import seaborn as sns
-from Pressure2Sound_JH import Pressure2Soundv2
-from Pressure2Sound_JH import Pressure2Soundv3
+from Pressure2Sound_JH import Pressure2Soundv6
 
 #importing numpy for some maths such as sinus curve
 import numpy as np
 
 #import matplotlib for graph plotting
 import matplotlib.pyplot as plt
-
-#dataset that produces dummies as we need it for the torch lightning module
 steps = 5400
+#dataset that produces dummies as we need it for the torch lightning module
+class Infinite(Dataset):
+
+    def __len__(self):
+        return steps
+
+    def __getitem__(self, idx):
+        return torch.rand(1)
+    
+#model for oral activity takes in past sound to produce new force
 class Infinite(Dataset):
 
     def __len__(self):
@@ -64,7 +73,7 @@ class soundPrediction(torch.nn.Module):
         x = self.linear2(x)
         x = self.sigmoid(x)
         return x
-    
+
 class  BabyBot(pl.LightningModule):
     def __init__(self,suckingFrequency = 0.1, memory = 10, noise=0.1, lr=0.001, condition="analog",threshold=0.1,age="old",sensoryNoise = 0.1,lossWeigths=[1.0,1.0,1.0],strength=0.4,device="cuda"):
         super(BabyBot,self).__init__()
@@ -138,22 +147,25 @@ class  BabyBot(pl.LightningModule):
         #this is so that in non anlog condition next timesteps after being over threshold still make sound
         self.leftOverSoundCounter = 100
         
-        self.pacifier = Pressure2Soundv3.Pacifier()
+        self.pacifier = Pressure2Soundv6.Pacifier()
         
-    def mapToReal(self):
-        #
+    def mapToReal(self):        #
         return self.producedForcesT#pacifier.map_pressure_to_frequency(self.producedForcesT, len(self.producedForcesT)/10)
     
     def realBack(self,desiredPressure):
-            
+        self.pacifier.condition = self.condition
+        self.pacifier.run(desiredPressure,1)
+        xToAppend = self.pacifier.x
+        xToAppend = str(xToAppend).replace("[","").replace("]","").replace(",","")
+        self.theX.append(xToAppend) # thiss pressure
+        self.theFreq.append(self.pacifier.frequency) # this is sound We want to record both as sound and pressure devide freq /400
+       
         if self.time*10 < self.conditionLength:
             return torch.tensor(0)
         if self.time*10 > self.conditionLength*5:
             return torch.tensor(0)
-        self.theX.append(self.pacifier.x)
-        self.theFreq.append(self.pacifier.frequency)
-        self.pacifier.run(desiredPressure,self.condition,1)
-        return self.pacifier.x#frequency#x#frequency#x[0]#frequency
+
+        return self.pacifier.x#frequency#x[0]#frequency
         
     #models time passed important for instinct
     def timestep(self):
@@ -236,12 +248,15 @@ class  BabyBot(pl.LightningModule):
         self.forces.append(regulatedForce.item())
         
         #record produced force
-        self.producedForcesT.append(regulatedForce2/400)
+        self.producedForcesT.append(regulatedForce2)
+
+        #print(regulatedForce2-regulatedForce.item())
+
+        regulatedForce = regulatedForce + (regulatedForce2-regulatedForce.item())
         
         #we calculate exhaustion which is how different the sucking force is from the instinct, perhaps this should only work if its higher than instinct 
         exhaustion = self.mseLoss(regulatedForce.to(self.device),instinctForce.float().to(self.device))#abs(regulatedForce-instinctForce)
-        
-        #TODO change it so we have baseline as another condition
+
         #here I want to change the condition based on time to passed to be closer to the original experiement where we have baseline->analog->nonanalog and so on in sequence
         if self.time*10 > self.conditionLength*2: #*2 because first baseline and then the start condition
             if (self.time*10 -self.conditionLength)% self.conditionLength <= 1:
@@ -327,6 +342,7 @@ class  BabyBot(pl.LightningModule):
             if sound ==0:
                 zeroCount+=1
         for i in range (len( self.theX)):
+            #print(self.producedForcesT[i])
             
             if self.theX[i] >= 0.1667 and self.theX[i]<= 0.2083:
                 if self.label[i] ==1:
@@ -335,6 +351,7 @@ class  BabyBot(pl.LightningModule):
                     thresholdCountNAna +=1
         return np.average(self.producedSoundsT),np.average(amplitude),zeroCount,[thresholdCountAna,thresholdCountNAna]
     
+
     
 '''
 This is the execution, you can change the variables in myModel = BabyBot()
@@ -363,235 +380,201 @@ def runExperiment(epochs,condition,noise,learningRate,memory,threshold,runs,age,
     averageAmp = []
     zeros = []
     thresholdHit =[]
-    noiseRange =np.random.uniform(low=noise,high=noise,size=runs) #np.random.uniform(low=noise-0.1,high=noise+0.1,size=runs)
-    sensoryNoiseRange = np.random.uniform(low=sensorNoise,high=sensorNoise,size=runs)#np.random.uniform(low=sensorNoise-0.1,high=sensorNoise+0.1,size=runs)
+    noiseRange = np.random.uniform(low=noise-0.1,high=noise+0.1,size=runs)
+    sensoryNoiseRange = np.random.uniform(low=sensorNoise-0.1,high=sensorNoise+0.1,size=runs)
     #how often we want to run this condition 
     for i in range(runs):
         
         #sets up the babybot, here the parameters are decided
         myModel = BabyBot(condition=condition,noise=noiseRange[i],lr=learningRate,memory=memory,threshold=threshold,age=age,sensoryNoise=sensoryNoiseRange[i],lossWeigths=lossWeights,strength=strength)
-        trainer = pl.Trainer("cpu",max_epochs=epochs)
+        trainer = pl.Trainer("cuda",max_epochs=epochs)
         now = time.time()
         trainer.fit(model=myModel)   
         after = time.time()
         print(after-now)
         
         #call funciton of the model to disply some results
-        avg,amp,z,t = myModel.showBehaviour()    
-        freq = myModel.theX#theFreq#theX#wantedForcesT
-        nfreq =[]
-        for f in range(len(freq)):
-            fi = f
-            f = freq[fi]
-            try:
-                    nfreq.append( f.item())
-            except:
-                    nfreq.append( f)
-
-
-                    print("go")
-
+        #avg,amp,z,t = myModel.showBehaviour()    
+        freq = myModel.wantedForcesT#theFreq#theX#wantedForcesT
         print(myModel.theX)
         #record results so that we can create the average of the runs 
-        averageSound.append(avg)
-        averageAmp.append(amp)
-        zeros.append(z)
-        thresholdHit.append(t)
-        df = pd.DataFrame(myModel.forces)
-        df.to_csv(f"run_{i}_start_{condition}_age_{age}.csv",index=None,header=None)
-    return ["averageSound",np.average(averageSound),"averageAmplitude",np.average(averageAmp),"averageZeros",np.average(zeros),"TresholdHits [Analog,nonAnalog]",thresholdHit],freq
+        #averageSound.append(avg)
+        #averageAmp.append(amp)
+        #zeros.append(z)
+        #thresholdHit.append(t)
+        #df = pd.DataFrame(myModel.forces)
+        #df.to_csv(f"run_{i}_start_{condition}_age_{age}.csv",index=None,header=None)
+    return ["averageSound",np.average(averageSound),"averageAmplitude",np.average(averageAmp),"averageZeros",np.average(zeros),"TresholdHits [Analog,nonAnalog]",thresholdHit],freq,myModel.forces
+import concurrent.futures
 import time
-def gridSearch():
-    startTime = time.time()
-    exploreLoss =  [0,1,2]
-    exhaustionLoss = [0,1,2]
-    predictionLoss = [0,1,2]
-    memory  = [1,5]
-    strength = [0.25,0.45,0.65]
-    actuaryNoise  = [0.05, 0.1, 0.2]
-    sensoryNoise  = [0.05, 0.1, 0.2]
-    results = []
-    for exp in exploreLoss:
-        for exh in exhaustionLoss:
-            for pred in predictionLoss:
-                for mem in memory:
-                    for stre in strength:
-                        for actu in actuaryNoise:
-                            for sens in sensoryNoise:
-                                startTime = time.time()
-                                myModelAnaSt = BabyBot(condition ="analog",noise = actu,lr = 0.005,memory=mem,threshold = 0.1667,age = "old",sensoryNoise=sens,lossWeigths=[exp,pred,exh],strength=stre) 
-                                trainer = pl.Trainer("gpu",max_epochs=1,logger=False)
-                                trainer.fit(model=myModelAnaSt)
-                                aavg,aamp,az,at = myModelAnaSt.showBehaviour()
-                                afreq = myModelAnaSt.mapToReal()
-                                
-                                myModelNAnaSt = BabyBot(
-                                    condition ="non-analog",
-                                    noise = actu,
-                                    lr = 0.005,
-                                    memory=mem,
-                                    threshold = 0.1667,
-                                    age = "old",
-                                    sensoryNoise=sens,
-                                    lossWeigths=[exp,pred,exh],
-                                    strength=stre
-                                    ) 
-                                trainer = pl.Trainer("gpu",max_epochs=1,logger=False)
-                                trainer.fit(model=myModelNAnaSt)
-                                avg,amp,z,t = myModelNAnaSt.showBehaviour()
-                                freq = myModelNAnaSt.mapToReal()
-                                params = {"exh":exh,"exp":exp,"pred":pred,"mem":mem,"stre":stre,"actu":actu,"sens":sens,
-                                          "NAavg":avg,"NAamp":amp,"NAz":z,"NAt":t,"NAfreq":freq,
-                                          "Aavg":aavg,"Aamp":aamp,"Az":az,"At":at,"Afreq":afreq}
-                                results.append(params)
-                                endTime = time.time()
-                                print(endTime-startTime)
-    return results
+def runSpecifcAblation(baseParameters,ablationName):
+    for run in range(50):
+            myModelAnalog = BabyBot(condition="analog",
+                              noise=baseParameters["actuaryNoise"],
+                              lr=0.005,
+                              memory=baseParameters["memory"],
+                              threshold=0.1667,
+                              age="old",
+                              sensoryNoise=baseParameters["sensoryNoise"],
+                              lossWeigths=[baseParameters["exploration"],
+                         baseParameters["prediction"],
+                         baseParameters["exhaustion"]],
+                         strength=baseParameters["strength"])
+            trainer = pl.Trainer("cuda",max_epochs=1)
+            trainer.fit(model=myModelAnalog)   
+            analogX = myModelAnalog.theX
+            analogFreq = myModelAnalog.theFreq
+
+            myModelNonalog = BabyBot(condition="non-analog",
+                              noise=baseParameters["actuaryNoise"],
+                              lr=0.005,
+                              memory=baseParameters["memory"],
+                              threshold=0.1667,
+                              age="old",
+                              sensoryNoise=baseParameters["sensoryNoise"],
+                              lossWeigths=[baseParameters["exploration"],
+                         baseParameters["prediction"],
+                         baseParameters["exhaustion"]],
+                         strength=baseParameters["strength"])
+            trainer = pl.Trainer("cuda",max_epochs=1)
+            trainer.fit(model=myModelNonalog)
+            nonanalogX = myModelNonalog.theX 
+            nonanalogFreq = myModelNonalog.theFreq
+            dir = f"./Ablations/{ablationName}/"
+            os.makedirs(dir, exist_ok=True)
+            fileNameNonAnalog = f"pressures_age_old_start_non-analog_trial_{run}_steps_{steps}_dt_01_lr_0005_exploration_{baseParameters['exploration']}_exhaustion_{baseParameters['exhaustion']}_prediction_{baseParameters['prediction']}_memory_{baseParameters['memory']}_strength_{baseParameters['strength']}_snoise_{baseParameters['sensoryNoise']}_anoise_{baseParameters['actuaryNoise']}.csv"
+            fileNameAnalog = f"pressures_age_old_start_analog_trial_{run}_steps_{steps}_dt_01_lr_0005_exploration_{baseParameters['exploration']}_exhaustion_{baseParameters['exhaustion']}_prediction_{baseParameters['prediction']}_memory_{baseParameters['memory']}_strength_{baseParameters['strength']}_snoise_{baseParameters['sensoryNoise']}_anoise_{baseParameters['actuaryNoise']}.csv"
+            data = {"x":analogX,"frequency":analogFreq}
+            df = pd.DataFrame(data)
+            df.to_csv(dir+fileNameAnalog,index=None)
+            data = {"x":nonanalogX,"frequency":nonanalogFreq}
+            df = pd.DataFrame(data)
+            df.to_csv(dir+fileNameNonAnalog,index=None,header=["x","frequency"])
+
 def performAblations():
     baseParameters= {
-        "actuaryNoise":0.005, # x4 young (not anymore)
-        "learningRate":0.005,
+        "actuaryNoise":0.02, # x4 young (not anymore)
+        #"learningRate":0.005,
         "memory":5,
-        "threshold":0.1667,
-        "runs":50,
-        "age":"young",
+        #"threshold":0.1667,
+        #"runs":50,
+        #"age":"young",
         "sensoryNoise":0.05,
-        "lossWeights1":1, # 0 1 1 
-        "lossWeights2":1,
-        "lossWeights3":1,
-        "strength":0.25}
+        "exploration":1, # 0 1 1 
+        "prediction":1,
+        "exhaustion":1,
+        "strength":0.45,
+        "standard": True}
+    
     for key in baseParameters.keys():   
         orKeyValue = baseParameters[key]
         baseParameters[key] = 0
-        analogRuns,analogFr = runExperiment(1,
-                        "analog", 
-                        baseParameters["actuaryNoise"],
-                        baseParameters["learningRate"],
-                        baseParameters["memory"],
-                        0.1667,
-                        baseParameters["runs"],
-                        "old",
-                        baseParameters["sensoryNoise"],
-                        [baseParameters["lossWeights1"],
-                         baseParameters["lossWeights2"],
-                         baseParameters["lossWeights3"]],
-                        baseParameters["strength"])
-        nonAnalogRuns,nonAnalogFR = runExperiment(1,
-                        "non-analog", 
-                        baseParameters["actuaryNoise"],
-                        baseParameters["learningRate"],
-                        baseParameters["memory"],
-                        0.1667,
-                        baseParameters["runs"],
-                        "old",
-                        baseParameters["sensoryNoise"],
-                        [baseParameters["lossWeights1"],
-                         baseParameters["lossWeights2"],
-                         baseParameters["lossWeights3"]],
-                        baseParameters["strength"])
-        
-        fileNameAnalog  = f"ablations_start_analog_steps_{steps}_actuaryNoise_{baseParameters['actuaryNoise']}_learningRate_{baseParameters['learningRate']}_memory_{baseParameters['memory']}_threshold_{baseParameters['threshold']}_runs_{baseParameters['runs']}_age_{baseParameters['age']}_sensoryNoise_{baseParameters['sensoryNoise']}_lossWeights1_{baseParameters['lossWeights1']}_lossWeights2_{baseParameters['lossWeights2']}_lossWeights3_{baseParameters['lossWeights3']}_strength_{baseParameters['strength']}.csv"
-        fileNameNonAnalog  = f"ablations_start_non-analog_steps_{steps}_actuaryNoise_{baseParameters['actuaryNoise']}_learningRate_{baseParameters['learningRate']}_memory_{baseParameters['memory']}_threshold_{baseParameters['threshold']}_runs_{baseParameters['runs']}_age_{baseParameters['age']}_sensoryNoise_{baseParameters['sensoryNoise']}_lossWeights1_{baseParameters['lossWeights1']}_lossWeights2_{baseParameters['lossWeights2']}_lossWeights3_{baseParameters['lossWeights3']}_strength_{baseParameters['strength']}.csv"
-        df = pd.DataFrame(analogRuns)
-        df.to_csv(fileNameAnalog,index=None,header=None)
-        df = pd.DataFrame(nonAnalogRuns)
-        df.to_csv(fileNameNonAnalog,index=None,header=None)
+        if key == "memory":
+            baseParameters["memory"] = 1
+        runSpecifcAblation(baseParameters,key)
         baseParameters[key] = orKeyValue
         print(f"Finished {key}")
-performAblations()      
-#gridResults = gridSearch()
-#import pandas as pd
-#df = pd.DataFrame(gridResults)
-#df.to_csv("./gridResCSVNew_31_03_25.csv")
-#%%
-'''
-#non analog young baby experiment now only starts with nonanalog
-#BaseValues: everything that is different means a change for the experiement, should always be the same for both runs of one age except for condition
-epochs = 1
-strength = 0.25
-memory = 1 #*5 old
-learningRate = 0.005
-threshold = 0.1667
-actuaryNoise = 0.5 # x4 young (not anymore)
-sensoryNoise = 0.05
-runs = 10
-lossWeights = [1.,1.,1.0] # 0 1 1 young
-# params: epochs,condition,noise,learningRate,memory,threshold,runs,age,sensorNoise,lossWeights,strength
-nonAnalogYoung,fr1  = runExperiment(epochs,"non-analog", actuaryNoise, learningRate,memory,threshold,runs,"young",sensoryNoise,[0.0,1.0,1.0],strength)
-# analog young baby experiment
-analogYoung,fr2 = runExperiment(epochs,"analog", actuaryNoise, learningRate,memory,threshold,runs,"young",sensoryNoise,[0.0,1.0,1.0],strength)
-#non analog old baby experiment
-nonAnalogOld,fr3 = runExperiment(epochs,"non-analog", actuaryNoise, learningRate,memory*5,threshold,runs,"old",sensoryNoise,lossWeights,strength)
-# analog old baby experiment
-analogOld,fr4 = runExperiment(epochs,"analog", actuaryNoise, learningRate,memory*5,threshold,runs,"old",sensoryNoise,lossWeights,strength)
-'''
-'''
-mem 2 instead of 5
-Old Baby, nonAnalog Start:  ['averageSound', 0.00017879840908878653, 'averageAmplitude', 0.00014459017205667018, 'averageZeros', 1801.0, 'TresholdHits [Analog,nonAnalog]', [[46, 604], [17, 379], [3, 360], [21, 82], [13, 75], [16, 584], [1, 7], [24, 493], [17, 59], [4, 39]]]
-Old Baby Analog Start:   ['averageSound', 0.00018169202614769887, 'averageAmplitude', 0.0001406647298977986, 'averageZeros', 1801.0, 'TresholdHits [Analog,nonAnalog]', [[52, 1], [34, 3], [57, 47], [13, 5], [46, 9], [151, 170], [263, 269], [17, 5], [45, 14], [305, 352]]]
-Young Baby nonAnalog Start:  ['averageSound', 0.0001741648592872641, 'averageAmplitude', 0.00012455691724444512, 'averageZeros', 1801.0, 'TresholdHits [Analog,nonAnalog]', [[1, 27], [26, 42], [6, 26], [2, 12], [6, 14], [21, 45], [3, 12], [15, 42], [17, 46], [10, 39]]]
-Young Baby Analog Start: ['averageSound', 0.0001384728425712361, 'averageAmplitude', 0.00010986007199659028, 'averageZeros', 1801.0, 'TresholdHits [Analog,nonAnalog]', [[45, 6], [16, 5], [128, 19], [40, 7], [19, 6], [47, 22], [21, 1], [5, 1], [27, 7], [43, 11]]]
-no explo diff
-Old Baby, nonAnalog Start:  ['averageSound', 0.00016988175008200175, 'averageAmplitude', 0.00013148138968779128, 'averageZeros', 1801.0, 'TresholdHits [Analog,nonAnalog]', [[2, 6], [19, 32], [31, 251], [34, 547], [1, 14], [5, 28], [8, 35], [11, 96], [1, 357], [3, 22]]]
-Old Baby Analog Start:   ['averageSound', 0.00017449387280519244, 'averageAmplitude', 0.0001332153783936728, 'averageZeros', 1801.0, 'TresholdHits [Analog,nonAnalog]', [[79, 18], [25, 11], [153, 259], [114, 257], [68, 4], [14, 5], [9, 3], [10, 0], [91, 85], [44, 19]]]
-Young Baby nonAnalog Start:  ['averageSound', 0.00015717337706238835, 'averageAmplitude', 0.00012390094444003906, 'averageZeros', 1801.0, 'TresholdHits [Analog,nonAnalog]', [[36, 685], [0, 29], [6, 152], [0, 13], [4, 344], [2, 20], [16, 69], [16, 145], [18, 46], [19, 58]]]
-Young Baby Analog Start: ['averageSound', 0.00018740552650638043, 'averageAmplitude', 0.00014340715701322031, 'averageZeros', 1801.0, 'TresholdHits [Analog,nonAnalog]', [[49, 44], [178, 381], [30, 11], [13, 0], [53, 139], [22, 14], [7, 0], [296, 255], [439, 358], [11, 0]]]
+        ## 1 file per trial
+        #pressures__age_old__start_analog__trial_13__steps_900__dt_01__lr_0003__exploration_1.0__exhaustion_1.0__prediction_1.0__memory_5__strength_0.45__snoise_0.05__anoise_0.05.csv
+def evaluate_params(exp, exh, pred, mem, stre, actu, sens):
+    myModelAnaSt = BabyBot(condition="analog", noise=actu, lr=0.005, memory=mem, threshold=0.1667, age="old", sensoryNoise=sens, lossWeigths=[exp, pred, exh], strength=stre)
+    trainer = pl.Trainer("gpu", max_epochs=1, logger=False)
+    trainer.fit(model=myModelAnaSt)
+    aavg, aamp, az, at = myModelAnaSt.showBehaviour()
+    #afreq = myModelAnaSt.producedForcesT*400
+    afreq = myModelAnaSt.theFreq
+    x = myModelAnaSt.theX
 
-high noise
-Old Baby, nonAnalog Start:  ['averageSound', 0.00013711107598005432, 'averageAmplitude', 0.00013632625788951067, 'averageZeros', 1801.0, 'TresholdHits [Analog,nonAnalog]', [[13, 65], [19, 138], [11, 76], [23, 90], [19, 90], [17, 139], [8, 98], [11, 84], [9, 134], [16, 205]]]
-Old Baby Analog Start:   ['averageSound', 0.00037556021025325864, 'averageAmplitude', 0.00048462045229242037, 'averageZeros', 1801.0, 'TresholdHits [Analog,nonAnalog]', [[27, 77], [16, 67], [57, 42], [45, 30], [71, 55], [46, 20], [19, 87], [29, 43], [27, 87], [9, 69]]]
-Young Baby nonAnalog Start:  ['averageSound', 9.281916769257824e-05, 'averageAmplitude', 8.842510225588057e-05, 'averageZeros', 1801.0, 'TresholdHits [Analog,nonAnalog]', [[22, 43], [19, 82], [24, 53], [19, 49], [17, 74], [15, 54], [16, 35], [21, 50], [20, 58], [19, 63]]]
-Young Baby Analog Start: ['averageSound', 9.25533993515123e-05, 'averageAmplitude', 8.860664030002378e-05, 'averageZeros', 1801.0, 'TresholdHits [Analog,nonAnalog]', [[66, 25], [48, 26], [34, 14], [54, 17], [60, 26], [46, 11], [61, 15], [46, 27], [46, 13], [84, 28]]]
+    myModelNAnaSt = BabyBot(
+        condition="non-analog",
+        noise=actu,
+        lr=0.005,
+        memory=mem,
+        threshold=0.1667,
+        age="old",
+        sensoryNoise=sens,
+        lossWeigths=[exp, pred, exh],
+        strength=stre
+    )
+    trainer = pl.Trainer("gpu", max_epochs=1, logger=False)
+    trainer.fit(model=myModelNAnaSt)
+    avg, amp, z, t = myModelNAnaSt.showBehaviour()
+    freq = myModelNAnaSt.theFreq
+    Nx = myModelNAnaSt.theX
+    
 
-'''
+    params = {
+        "exh": exh, "exp": exp, "pred": pred, "mem": mem, "stre": stre, "actu": actu, "sens": sens,
+        "NAavg": avg, "NAamp": amp, "NAz": z, "NAt": t, "NAfreq": freq, "Ax": x,
+        "Aavg": aavg, "Aamp": aamp, "Az": az, "At": at, "Afreq": afreq, "NAx": Nx
+    }
 
+    return params
 
-#prints of the results
-'''
-print("Old Baby, nonAnalog Start: ",nonAnalogOld)
-print("Old Baby Analog Start:  ",analogOld)      
-print("Young Baby nonAnalog Start: ",nonAnalogYoung)
-print("Young Baby Analog Start:",analogYoung)  
-#%%
 import pandas as pd
-df = pd.read_csv("run_3_start_non-analog_age_old.csv")
-values = df.values
-fr3 = values
-#%%
-def flatter (data):
-    return  [float(val) if isinstance(val, np.ndarray) else val for val in data]
-#%%
-data = np.array(flatter(fr1))
-sns.scatterplot(x=range(len(data)),y=data,s=5).set_title("non-analog start, young")
-sns.kdeplot(x=range(len(data)),y=data,fill=True,alpha=0.7)
-#%%
+def gridSearch():
+    exploreLoss = [0, 1, 2]
+    exhaustionLoss = [0, 1, 2]
+    predictionLoss = [0, 1, 2]
+    memory = [1, 5]
+    strength = [0.25, 0.45, 0.65]
+    actuaryNoise = [0.05, 0.1, 0.2]
+    sensoryNoise = [0.05, 0.1, 0.2]
+    results = []
 
-data = np.array(flatter(fr2))
-sns.scatterplot(x=range(len(data)),y=data,s=5).set_title("analog start, young")
-sns.kdeplot(x=range(len(data)),y=data,fill=True,alpha=0.7)
+    startTime = time.time()
+    i = 0
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:  # reduced max_workers
+        futures = []
+        for exp in exploreLoss:
+            for exh in exhaustionLoss:
+                for pred in predictionLoss:
+                    for mem in memory:
+                        for stre in strength:
+                            for actu in actuaryNoise:
+                                for sens in sensoryNoise:
+                                    futures.append(executor.submit(evaluate_params, exp, exh, pred, mem, stre, actu, sens))
+                                    # Once a batch of futures reaches a specific threshold, compute results
+                                    if len(futures) >= 10:  # arbitrary batch size
+                                        for future in concurrent.futures.as_completed(futures):
+                                            results.append(future.result())
+                                            i += 1
+                                            print("done:",str(i))
+                                        futures = []  # reset futures list for next batch
+                                print("sens Done")
+                            print("actu done")
+                        print("stre done")
+                    print("mem done")
+                print("pred done")
+            print("exh done")
+        print("exp done")
+        
+        # process remaining futures
+        for future in concurrent.futures.as_completed(futures):
+            results.append(future.result())
+            
+    endTime = time.time()
+    print("Total computation time:", endTime - startTime)
+    
+    return results
 #%%
-data = np.array(flatter(fr3))
-sns.scatterplot(x=range(len(data)),y=data,s=5).set_title("non-analog start, old")
-sns.kdeplot(x=range(len(data)),y=data,fill=True,alpha=0.7)
+baseParameters= {
+        "actuaryNoise":0.02, # x4 young (not anymore)
+        #"learningRate":0.005,
+        "memory":5,
+        #"threshold":0.1667,
+        #"runs":50,
+        #"age":"young",
+        "sensoryNoise":0.05,
+        "exploration":1, # 0 1 1 
+        "prediction":1,
+        "exhaustion":1,
+        "strength":0.45,
+        "standard": True}
+runSpecifcAblation(baseParameters,"exhaustionFromPacifier")
+#performAblations()
+#gridResults = gridSearch()
+#df = pd.DataFrame(gridResults)
+#df.to_csv("./gridResCSVNewImproved.csv")
 #%%
-data = np.array(flatter(fr4))
-sns.scatterplot(x=range(len(data)),y=data,s=5).set_title("analog start, old")
-sns.kdeplot(x=range(len(data)),y=data,fill=True,alpha=0.7) 
-#%%
-#plt.xlabel("time steps")
-#plt.ylabel("intensity")
-#plt.plot(fr1,"ob", markersize=0.5)
-#plt.show()
-#plt.xlabel("time steps")
-#plt.ylabel("intensity")
-#plt.plot(fr2,"ob", markersize=0.5)
-#plt.show()
-#plt.xlabel("time steps")
-#plt.ylabel("intensity")
-#plt.plot(fr3,"ob", markersize=0.5)
-#plt.show()
-#plt.xlabel("time steps")
-#plt.ylabel("intensity")
-#plt.plot(fr4,"ob", markersize=0.5)#
-#plt.show()
-'''
+#params = evaluate_params(1,1,1,1,0.45,0.1,0.1)

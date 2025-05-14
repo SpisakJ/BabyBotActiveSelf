@@ -1,15 +1,17 @@
 import numpy as np
 import matplotlib.pyplot as plt
+# import sounddevice as sd
+from scipy.linalg import expm
 
 class Pacifier:
-    def __init__(self, condition="analog"):
+    def __init__(self, condition="analog", dt=0.01):
         
         self.condition = condition
         
         # for analog condition
         self.pressure_range = (0, 1)
         self.frequency_range = (0, 400)
-        self.pressure_threshold = 0.1  # Pressure threshold for producing sound
+        self.pressure_threshold = 0.16  # Pressure threshold for producing sound
 
         # for non-analog condition
         self.trill_t0 = 0.0
@@ -29,13 +31,41 @@ class Pacifier:
         self.time = 0.0
 
         # system settings
-        self.m = 1
-        self.k = 15
-        self.d = 1.5*np.sqrt(self.m*self.k)
-        self.equ_noise = 0
-        self.x_desired_noise = 0
-        self.F_noise = 0
-        self.dt = 0.1
+        self.m  = 0.2
+        self.k  = 15.0
+        self.d  = 1.7*np.sqrt(self.m*self.k)
+        self.k_I= self.k*2.2
+        self.dt = dt
+        self.err_int_limit = 0.5
+
+        # Stability proof:
+        # 1. Continuous-time characteristic polynomial:
+        #      m*s^3 + d*s^2 + k*s + k_I = 0
+        #    Routh–Hurwitz condition: d>0, k>0, k_I>0, and d*k > m*k_I
+        #    Here: d*k = 2.9444*15 = 44.166 > m*k_I = 0.2*33.0 = 6.6  ✓
+        #    ⇒ all continuous poles have Re(s)<0
+        # 2. Exact ZOH discretization yields eigenvalues λ_i = exp(s_i*dt)
+        #    ⇒ |λ_i| = exp(Re(s_i)*dt) < 1 for any dt>0
+        #    ⇒ discrete-time map is a strict contraction, globally stable
+
+        # build continuous-time state matrices for z=[x; v; I]:
+        #   x' = v
+        #   v' = (−k x − d v + k_I I)/m
+        #   I' = (x_des−x)
+        Ac = np.array([
+            [   0,        1,       0      ],
+            [ -self.k/self.m, -self.d/self.m, self.k_I/self.m ],
+            [  -1,        0,       0      ],
+        ])
+        Bc = np.array([0.0, 0.0, 1.0])
+
+        # exact ZOH discretization
+        self.Ad = expm(Ac * self.dt)
+        # Bd = ∫₀ᵈᵗ e^{Ac τ} dτ · Bc = Ac^{-1}(Ad − I) Bc
+        self.Bd = np.linalg.solve(Ac, (self.Ad - np.eye(3))) @ Bc
+
+        # pack state
+        self.state = np.zeros(3)   # [x, v, I]
 
         # data logging
         self.x_log = np.array([self.x])
@@ -54,37 +84,14 @@ class Pacifier:
                 Desired position (= desired pressure) as input to the dynamical system 
         """
 
-        if x_desired != self.x_desired_log[-1]:
-            self.x_desired_noise = np.random.normal(0, 0.01, 1)
-            self.equ_noise = np.random.normal(-0.01, 0.01, 1)
-        
-        if self.F_noise == 0:
-            self.F_noise = np.random.normal(0.006,0.006/2,1)
-        
-        x_target = x_desired + self.x_desired_noise
-        
-        err = (x_target-self.x)
-        self.err_int = self.err_int + err
+        # exact discrete update of [x;v;I]
+        z = self.Ad @ self.state + self.Bd * x_desired
+        self.state = z
+        self.x, self.v, self.err_int = z
 
-        if x_target > 0.05:
-            # k_I = (np.tanh(80*err)+1)*(0.008+self.F_noise)
-            k_I = (np.tanh(80*err)+1)*(0.008+self.F_noise) * (self.dt/0.001)
-            F_u = k_I*self.err_int
-
-            F = self.F + 1*(F_u-self.F)
-        else:
-            F_u = 0
-            self.F_noise = 0
-            self.err_int = 0
-            F = self.F + 1*(F_u-self.F)
-
-        # perform one step & update states
-        self.F = F
-        self.a = (F + self.d*(0-self.v) + self.k*(self.equ_noise-self.x)) / self.m
-        self.v = self.v + self.a*self.dt
-        self.x = self.x + self.v*self.dt
-        self.step = self.step +1
-        self.time = self.step*self.dt
+        # compute force for logging
+        self.F = self.k_I * self.err_int
+        self.time += self.dt
 
         # log data
         self.x_log = np.append(self.x_log, self.x)
@@ -132,7 +139,7 @@ class Pacifier:
 
             # Ensure the index is within the bounds of the array
             if frequ_index >= self.n_trills:
-                frequ_index = self.n_trills-1
+                frequ_index = self.n_trills - 1
 
             # Select the frequency
             self.frequency = self.trill_freq[frequ_index]
@@ -154,14 +161,12 @@ class Pacifier:
             frequency_min, frequency_max = self.frequency_range
             pressure = max(min(pressure, pressure_max), pressure_min)  # Clamp pressure within range
             self.frequency = ((pressure - pressure_min) / (pressure_max - pressure_min)) * (frequency_max - frequency_min) + frequency_min
-            if not isinstance(self.frequency, float):
-                self.frequency = self.frequency[0]
         else:
             self.frequency = 0.0
             
         self.frequency_log = np.append(self.frequency_log, self.frequency)
     
-    def run(self, desired_pressure,condition="analog", steps=1):
+    def run(self, desired_pressure, steps=1):
         """
             Simulate the pacifier using a mass sping damper system and the analog/non-analog condition.
 
@@ -172,44 +177,40 @@ class Pacifier:
             steps : int, optional
                 The number of steps to perform the simulation for
         """
-        self.condition = condition
 
         for iter in range(steps):
             self.step_mass_spring_damper(x_desired=desired_pressure)
             self.map_pressure_to_frequency(pressure=self.x)
 
-    def visualize_system(self):
+    def visualize_system(self, show_pitch=False):
         """
             Plot pressure, force and frequencies.
         """
 
         # Initialize subplots
-        fig, axs = plt.subplots(3, 1, figsize=(10, 6))
+        fig, axs = plt.subplots(1, 1, figsize=(5, 3))  # Corrected to plt.subplots
+
         time_points = np.arange(len(self.x_log)) * self.dt
 
-        axs[0].plot(time_points, self.x_log, label='x', color="blue")
-        axs[0].plot(time_points, self.x_desired_log, label='x_desired', color="orange")
-        axs[0].axhline(y = 0.1, color = 'r', linestyle = '--')
-        axs[0].set_ylabel('Pressure (psi)')
-        axs[0].set_ylim([-0.1, 0.7])
-        
-        axs[1].plot(time_points, self.F_log, label='F', color="blue")
-        axs[1].set_ylabel('Force')
-        axs[1].set_xlabel('Time (s)')
-
-        axs[2].plot(time_points, self.frequency_log, label='freq', color="blue")
-        axs[2].set_ylabel('frequency (Hz)')
-        axs[2].set_xlabel('Time (s)')
-
-        for ax in axs:
-            ax.legend()
-            ax.grid(True)
-
+        axs.plot(time_points, self.x_log, label=r'$x$', color="blue")
+        axs.plot(time_points, self.x_desired_log, label=r'$x_{\rm des}$', color="orange")
+        if show_pitch:
+            axs.plot(time_points, self.frequency_log, label=r'$p$', color="green")
+        axs.axhline(y=0.1, color='r', linestyle='--', label=r'$x_{\rm thr}$')
+        axs.set_ylabel('Pressure (psi)')
+        # axs.set_ylim([-0.1, 1.1])
+        # axs.set_ylim([-0.1, 0.7])
+        axs.legend()
+        axs.grid(True)
+        # axs.set_xlim((time_points[0], time_points[-1]))
+        # axs.set_xlim((0, 13.5))
+        axs.set_xlabel('Time (s)')
+        plt.tight_layout()
+        plt.savefig('/home/jheidersberger/Documents/Projects/BabyBotActiveSelf/Pressure2Sound_JH/BioMdl_result_2.pdf')
         plt.show()
-    
 
 if __name__ == "__main__":
-    pac_env = Pacifier(condition="non-analog")
+    pac_env = Pacifier(condition="analog", dt=0.01)
 
     duration = 1.22
     pac_env.run(desired_pressure=0, steps=int(duration/pac_env.dt))
@@ -249,6 +250,15 @@ if __name__ == "__main__":
 
     duration = 1.95
     pac_env.run(desired_pressure=0.5, steps=int(duration/pac_env.dt))
+
+    duration = 2.25
+    pac_env.run(desired_pressure=0, steps=int(duration/pac_env.dt))
+
+    duration = 5.5
+    pac_env.run(desired_pressure=1.0, steps=int(duration/pac_env.dt))
+
+    duration = 7.5
+    pac_env.run(desired_pressure=0.0, steps=int(duration/pac_env.dt))
 
     pac_env.visualize_system()
 
