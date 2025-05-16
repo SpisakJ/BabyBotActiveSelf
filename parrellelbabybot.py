@@ -152,20 +152,18 @@ class  BabyBot(pl.LightningModule):
     def mapToReal(self):        #
         return self.producedForcesT#pacifier.map_pressure_to_frequency(self.producedForcesT, len(self.producedForcesT)/10)
     
-    def realBack(self,desiredPressure):
+    def realBack(self, desiredPressure):
         self.pacifier.condition = self.condition
-        self.pacifier.run(desiredPressure,1)
+        self.pacifier.run(desiredPressure, 1)
         xToAppend = self.pacifier.x
-        xToAppend = str(xToAppend).replace("[","").replace("]","").replace(",","")
-        self.theX.append(xToAppend) # thiss pressure
-        self.theFreq.append(self.pacifier.frequency) # this is sound We want to record both as sound and pressure devide freq /400
-       
+        self.theX.append(xToAppend)
+        self.theFreq.append(self.pacifier.frequency)
         if self.time*10 < self.conditionLength:
-            return torch.tensor(0)
+            return torch.tensor(0.0, device=self.device)
         if self.time*10 > self.conditionLength*5:
-            return torch.tensor(0)
-
-        return self.pacifier.x#frequency#x[0]#frequency
+            return torch.tensor(0.0, device=self.device)
+        # Return a new tensor, not a reference to self.pacifier.x
+        return self.pacifier.x
         
     #models time passed important for instinct
     def timestep(self):
@@ -224,7 +222,12 @@ class  BabyBot(pl.LightningModule):
     
     #this function does the actual training
     def training_step(self,batch):
-        
+        if self.time*10 > self.conditionLength*2: #*2 because first baseline and then the start condition
+            if (self.time*10 -self.conditionLength)% self.conditionLength <= 1:
+                if self.condition=="analog":
+                    self.condition= "non-analog"
+                elif self.condition=="non-analog":
+                    self.condition="analog"
         # we want the current instinct
         instinctForce = self.instinct()
         #advance time so next instinct is differnt
@@ -234,7 +237,7 @@ class  BabyBot(pl.LightningModule):
         #ps is past sound
         regulatedForce,ps = self.regulateSucking()
         
-        self.wantedForcesT.append(regulatedForce.item())
+        self.wantedForcesT.append(regulatedForce.detach().cpu().item())
         
         #we predict a sound using the prediction model
         predictedSound = self.soundPrediction(regulatedForce.to(self.device))
@@ -242,31 +245,33 @@ class  BabyBot(pl.LightningModule):
         #we add noise with the noise function
         regulatedForce = self.suckingNoise(regulatedForce)
         
-        regulatedForce2 = self.realBack(regulatedForce.item())
-        #print(regulatedForce2,regulatedForce.item())
-        
-        self.forces.append(regulatedForce.item())
+        regulatedForce2 = self.realBack(regulatedForce.item()) #shouldnt use item but have to somehow
+
+        if self.time*10 < self.conditionLength or self.time*10 > 5* self.conditionLength:
+            mult = 1
+        else:
+            mult = (regulatedForce2/regulatedForce.detach().item())+0.001
+        #print(mult)
+        exhaustion = self.mseLoss(regulatedForce*mult,instinctForce.float().to(self.device))
+        self.producedForcesT.append(regulatedForce2)
+
+        self.forces.append(regulatedForce.detach().cpu().item())
         
         #record produced force
-        self.producedForcesT.append(regulatedForce2)
 
         #print(regulatedForce2-regulatedForce.item())
 
-        regulatedForce = regulatedForce + (regulatedForce2-regulatedForce.item())
+        #regulatedForce = regulatedForce + (regulatedForce2-regulatedForce.item())
         
         #we calculate exhaustion which is how different the sucking force is from the instinct, perhaps this should only work if its higher than instinct 
-        exhaustion = self.mseLoss(regulatedForce.to(self.device),instinctForce.float().to(self.device))#abs(regulatedForce-instinctForce)
+        #exhaustion = self.mseLoss(regulatedForce2,instinctForce.float().to(self.device))#abs(regulatedForce-instinctForce)
 
         #here I want to change the condition based on time to passed to be closer to the original experiement where we have baseline->analog->nonanalog and so on in sequence
-        if self.time*10 > self.conditionLength*2: #*2 because first baseline and then the start condition
-            if (self.time*10 -self.conditionLength)% self.conditionLength <= 1:
-                if self.condition=="analog":
-                    self.condition= "non-analog"
-                elif self.condition=="non-analog":
-                    self.condition="analog"
+
         
         #basicly the force to sound function but adjusted and copied here to make back propagation easier 
         #this should be changed so that it just uses the existing funciton
+
         if self.time*10 < self.conditionLength or self.time*10 > 5* self.conditionLength:
             regulatedForce = regulatedForce*0
         
@@ -298,7 +303,7 @@ class  BabyBot(pl.LightningModule):
             label= ps[-1]*0
             
         #using the label just created we want to minimize the distance from it to our current sound
-        repLoss = 1-self.mseLoss(regulatedForce,ps[-1])
+        repLoss = 1-self.mseLoss(regulatedForce*mult,ps[-1])
         
         #we add all our losses together
         loss =repLoss*self.lossWeigths[0]+predictionLoss*self.lossWeigths[1]+exhaustion*self.lossWeigths[2]
@@ -308,11 +313,11 @@ class  BabyBot(pl.LightningModule):
         
         #we update the past sound with the current sound
         with torch.no_grad():
-            self.pastSounds = torch.cat((self.pastSounds,torch.tensor([regulatedForce.item()])+self.sensoryNoise))
+            self.pastSounds = torch.cat((self.pastSounds,torch.tensor([regulatedForce*mult])+self.sensoryNoise))
             self.pastSounds  = self.pastSounds[1:]
         #self.pastSounds = torch.tensor([regulatedForce.item()]).cuda()+self.sensoryNoise
         #we record the current sound so that we can display the sounds created during training at a later time.
-        self.producedSoundsT.append(regulatedForce2.item()/400)
+        self.producedSoundsT.append(regulatedForce2/400)
         if self.condition == "analog":
             self.label.append(1)
         else:
@@ -438,9 +443,9 @@ def runSpecifcAblation(baseParameters,ablationName):
                          strength=baseParameters["strength"])
             trainer = pl.Trainer("cuda",max_epochs=1)
             trainer.fit(model=myModelNonalog)
-            nonanalogX = myModelNonalog.theX 
+            nonanalogX = myModelNonalog.theX
             nonanalogFreq = myModelNonalog.theFreq
-            dir = f"./Ablations/{ablationName}/"
+            dir = f"./Ablations_16_05_2025/{ablationName}/"
             os.makedirs(dir, exist_ok=True)
             fileNameNonAnalog = f"pressures_age_old_start_non-analog_trial_{run}_steps_{steps}_dt_01_lr_0005_exploration_{baseParameters['exploration']}_exhaustion_{baseParameters['exhaustion']}_prediction_{baseParameters['prediction']}_memory_{baseParameters['memory']}_strength_{baseParameters['strength']}_snoise_{baseParameters['sensoryNoise']}_anoise_{baseParameters['actuaryNoise']}.csv"
             fileNameAnalog = f"pressures_age_old_start_analog_trial_{run}_steps_{steps}_dt_01_lr_0005_exploration_{baseParameters['exploration']}_exhaustion_{baseParameters['exhaustion']}_prediction_{baseParameters['prediction']}_memory_{baseParameters['memory']}_strength_{baseParameters['strength']}_snoise_{baseParameters['sensoryNoise']}_anoise_{baseParameters['actuaryNoise']}.csv"
@@ -571,8 +576,9 @@ baseParameters= {
         "exhaustion":1,
         "strength":0.45,
         "standard": True}
-runSpecifcAblation(baseParameters,"exhaustionFromPacifier")
-#performAblations()
+#runSpecifcAblation(baseParameters,"exhaustionFromPacifier")
+#
+performAblations()
 #gridResults = gridSearch()
 #df = pd.DataFrame(gridResults)
 #df.to_csv("./gridResCSVNewImproved.csv")

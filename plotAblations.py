@@ -39,10 +39,10 @@ def plotAblation(key, colors=['blue', 'orange']):
                     mean_data_nonana + std_data_nonana, 
                     alpha=0.2, color=colors[1])
     plt.legend()
-
+    
 # Example usage:
 setupPlot()
-#plotAblation("prediction_5", colors=['blue', 'orange'])
+plotAblation("exhaustionFromPacifier", colors=['blue', 'orange'])
 plotAblation("standard", colors=['red', 'green'])
 plt.title('Comparison of Different Ablations')
 plt.show()
