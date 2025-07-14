@@ -218,15 +218,15 @@ class Pacifier:
         axs.plot(time_points, self.x_desired_log, label=r'$x_{\rm des}$', color="orange")
         axs.axhline(y=0.1, color='r', linestyle='--', label=r'$x_{\rm thr}$')
         axs.set_ylabel('Pressure (psi)')
-        # axs.set_ylim([-0.1, 1.1])
-        axs.set_ylim([-0.1, 0.7])
+        axs.set_ylim([-0.1, 1.1])
+        # axs.set_ylim([-0.1, 0.7])
         axs.legend()
         axs.grid(True)
         # axs.set_xlim((time_points[0], time_points[-1]))
-        axs.set_xlim((0, 13.5))
+        # axs.set_xlim((0, 13.5))
         axs.set_xlabel('Time (s)')
         plt.tight_layout()
-        plt.savefig('/home/jheidersberger/Documents/Projects/BabyBotActiveSelf/Pressure2Sound_JH/BioMdl_result_2.pdf')
+        plt.savefig('/home/jheidersberger/Documents/Projects/BabyBotActiveSelf/Pressure2Sound_JH/BioMdl_result_1.pdf')
 
     # def play_dynamic_pitch(self):
     #     """

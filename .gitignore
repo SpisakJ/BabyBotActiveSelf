@@ -1,3 +1,5 @@
 # Ignored files
 *.csv
 *.pdf
+*.png
+Pressure2Sound_JH/data/*

@@ -4,9 +4,12 @@ import matplotlib.pyplot as plt
 from scipy.linalg import expm
 
 class Pacifier:
-    def __init__(self, condition="analog", dt=0.01):
+    def __init__(self, condition="analog", dt=0.01, enable_adaptive_gain=False, enable_noise=False, enable_selective_integrator=False):
         
         self.condition = condition
+        self.enable_adaptive_gain = enable_adaptive_gain
+        self.enable_noise = enable_noise
+        self.enable_selective_integrator = enable_selective_integrator
         
         # for analog condition
         self.pressure_range = (0, 1)
@@ -30,42 +33,57 @@ class Pacifier:
         self.step = 0
         self.time = 0.0
 
-        # system settings
-        self.m  = 0.2
-        self.k  = 15.0
-        self.d  = 1.7*np.sqrt(self.m*self.k)
-        self.k_I= self.k*2.2
-        self.dt = dt
-        self.err_int_limit = 0.5
+        # Check if any of the features requiring v4 parameters are enabled
+        self.use_v4_system = enable_adaptive_gain or enable_noise or enable_selective_integrator
+        
+        if self.use_v4_system:
+            # Use Pressure2Soundv4 parameters and system
+            self.m = 1
+            self.k = 15
+            self.d = 1.5*np.sqrt(self.m*self.k)
+            self.dt = dt if dt != 0.01 else 0.001  # Use 0.001 as default for v4
+            
+            # v4 specific variables for noise and adaptive features
+            self.equ_noise = 0
+            self.x_desired_noise = 0
+            self.F_noise = 0
+        else:
+            # Use Pressure2Soundv6 parameters and system
+            self.m = 0.2
+            self.k = 15.0
+            self.d = 1.7*np.sqrt(self.m*self.k)
+            self.k_I = self.k*2.2
+            self.dt = dt
+            self.err_int_limit = 0.5
 
-        # Stability proof:
-        # 1. Continuous-time characteristic polynomial:
-        #      m*s^3 + d*s^2 + k*s + k_I = 0
-        #    Routh–Hurwitz condition: d>0, k>0, k_I>0, and d*k > m*k_I
-        #    Here: d*k = 2.9444*15 = 44.166 > m*k_I = 0.2*33.0 = 6.6  ✓
-        #    ⇒ all continuous poles have Re(s)<0
-        # 2. Exact ZOH discretization yields eigenvalues λ_i = exp(s_i*dt)
-        #    ⇒ |λ_i| = exp(Re(s_i)*dt) < 1 for any dt>0
-        #    ⇒ discrete-time map is a strict contraction, globally stable
+            # Stability proof:
+            # 1. Continuous-time characteristic polynomial:
+            #      m*s^3 + d*s^2 + k*s + k_I = 0
+            #    Routh–Hurwitz condition: d>0, k>0, k_I>0, and d*k > m*k_I
+            #    Here: d*k = 2.9444*15 = 44.166 > m*k_I = 0.2*33.0 = 6.6  ✓
+            #    ⇒ all continuous poles have Re(s)<0
+            # 2. Exact ZOH discretization yields eigenvalues λ_i = exp(s_i*dt)
+            #    ⇒ |λ_i| = exp(Re(s_i)*dt) < 1 for any dt>0
+            #    ⇒ discrete-time map is a strict contraction, globally stable
 
-        # build continuous-time state matrices for z=[x; v; I]:
-        #   x' = v
-        #   v' = (−k x − d v + k_I I)/m
-        #   I' = (x_des−x)
-        Ac = np.array([
-            [   0,        1,       0      ],
-            [ -self.k/self.m, -self.d/self.m, self.k_I/self.m ],
-            [  -1,        0,       0      ],
-        ])
-        Bc = np.array([0.0, 0.0, 1.0])
+            # build continuous-time state matrices for z=[x; v; I]:
+            #   x' = v
+            #   v' = (−k x − d v + k_I I)/m
+            #   I' = (x_des−x)
+            Ac = np.array([
+                [   0,        1,       0      ],
+                [ -self.k/self.m, -self.d/self.m, self.k_I/self.m ],
+                [  -1,        0,       0      ],
+            ])
+            Bc = np.array([0.0, 0.0, 1.0])
 
-        # exact ZOH discretization
-        self.Ad = expm(Ac * self.dt)
-        # Bd = ∫₀ᵈᵗ e^{Ac τ} dτ · Bc = Ac^{-1}(Ad − I) Bc
-        self.Bd = np.linalg.solve(Ac, (self.Ad - np.eye(3))) @ Bc
+            # exact ZOH discretization
+            self.Ad = expm(Ac * self.dt)
+            # Bd = ∫₀ᵈᵗ e^{Ac τ} dτ · Bc = Ac^{-1}(Ad − I) Bc
+            self.Bd = np.linalg.solve(Ac, (self.Ad - np.eye(3))) @ Bc
 
-        # pack state
-        self.state = np.zeros(3)   # [x, v, I]
+            # pack state
+            self.state = np.zeros(3)   # [x, v, I]
 
         # data logging
         self.x_log = np.array([self.x])
@@ -83,15 +101,72 @@ class Pacifier:
             x_desired : float
                 Desired position (= desired pressure) as input to the dynamical system 
         """
+        
+        if self.use_v4_system:
+            # Use Pressure2Soundv4 approach with adaptive gain, noise, and selective integrator
+            if self.enable_noise:
+                if x_desired != self.x_desired_log[-1]:
+                    self.x_desired_noise = np.random.normal(0, 0.01, 1)
+                    self.equ_noise = np.random.normal(-0.01, 0.01, 1)
+                
+                if self.F_noise == 0:
+                    self.F_noise = np.random.normal(0.006, 0.006/2, 1)
+            else:
+                self.x_desired_noise = 0
+                self.equ_noise = 0
+                self.F_noise = 0
+            
+            x_target = x_desired + self.x_desired_noise
+            err = (x_target - self.x)
+            self.err_int = self.err_int + err
 
-        # exact discrete update of [x;v;I]
-        z = self.Ad @ self.state + self.Bd * x_desired
-        self.state = z
-        self.x, self.v, self.err_int = z
+            if self.enable_selective_integrator and x_target > 0.05:
+                # Selective integrator active when pressure is above threshold
+                if self.enable_adaptive_gain:
+                    k_I = (np.tanh(80*abs(err))+1)*(0.008+self.F_noise) * (self.dt/0.001)
+                    F_u = k_I*self.err_int
+                else:
+                    k_I = 0.03 * (self.dt/0.001) #0.015
+                    F_u = k_I*self.err_int
 
-        # compute force for logging
-        self.F = self.k_I * self.err_int
-        self.time += self.dt
+                F = self.F + 1*(F_u-self.F)
+            elif not self.enable_selective_integrator:
+                # Standard integrator behavior
+                if self.enable_adaptive_gain:
+                    k_I = (np.tanh(80*abs(err))+1)*(0.008+self.F_noise) * (self.dt/0.001)
+                    F_u = k_I*self.err_int
+                else:
+                    k_I = 0.03 * (self.dt/0.001)
+                    F_u = k_I*self.err_int
+
+                F = self.F + 1*(F_u-self.F)
+            else:
+                # Selective integrator: reset when pressure is low
+                F_u = 0
+                self.F_noise = 0
+                self.err_int = 0
+                F = self.F + 1*(F_u-self.F)
+
+            F = max(min(F, 15), -15)
+
+            # perform one step & update states
+            self.F = F
+            self.a = (F + self.d*(0-self.v) + self.k*(self.equ_noise-self.x)) / self.m
+            self.v = self.v + self.a*self.dt
+            self.x = self.x + self.v*self.dt
+            self.step = self.step + 1
+            self.time = self.step*self.dt
+            
+        else:
+            # Use Pressure2Soundv6 approach with exact ZOH discretization
+            # exact discrete update of [x;v;I]
+            z = self.Ad @ self.state + self.Bd * x_desired
+            self.state = z
+            self.x, self.v, self.err_int = z
+
+            # compute force for logging
+            self.F = self.k_I * self.err_int
+            self.time += self.dt
 
         # log data
         self.x_log = np.append(self.x_log, self.x)
@@ -182,33 +257,6 @@ class Pacifier:
             self.step_mass_spring_damper(x_desired=desired_pressure)
             self.map_pressure_to_frequency(pressure=self.x)
 
-    # def visualize_system(self, show_pitch=False):
-    #     """
-    #         Plot pressure, force and frequencies.
-    #     """
-
-    #     # Initialize subplots
-    #     fig, axs = plt.subplots(1, 1, figsize=(5, 3))  # Corrected to plt.subplots
-
-    #     time_points = np.arange(len(self.x_log)) * self.dt
-
-    #     axs.plot(time_points, self.x_log, label=r'$x$', color="blue")
-    #     axs.plot(time_points, self.x_desired_log, label=r'$x_{\rm des}$', color="orange")
-    #     if show_pitch:
-    #         axs.plot(time_points, self.frequency_log, label=r'$p$', color="green")
-    #     axs.axhline(y=0.1, color='r', linestyle='--', label=r'$x_{\rm thr}$')
-    #     axs.set_ylabel('Pressure (psi)')
-    #     axs.set_ylim([-0.1, 1.1])
-    #     # axs.set_ylim([-0.1, 0.7])
-    #     axs.legend()
-    #     axs.grid(True)
-    #     # axs.set_xlim((time_points[0], time_points[-1]))
-    #     # axs.set_xlim((0, 13.5))
-    #     axs.set_xlabel('Time (s)')
-    #     plt.tight_layout()
-    #     plt.savefig('/home/jheidersberger/Documents/Projects/BabyBotActiveSelf/Pressure2Sound_JH/BioMdl_result_2.pdf')
-    #     # plt.show()
-
     def visualize_system(self, show_pitch=False):
         """
             Plot pressure, force and frequencies.
@@ -241,11 +289,23 @@ class Pacifier:
             ax1.legend()
         
         plt.tight_layout()
-        plt.savefig('/home/jheidersberger/Documents/Projects/BabyBotActiveSelf/Pressure2Sound_JH/BioMdl_result_2.pdf')
+        
+        # Choose appropriate filename based on system type
+        if self.use_v4_system:
+            filename = '/home/jheidersberger/Documents/Projects/BabyBotActiveSelf/Pressure2Sound_JH/BioMdl_result_v8.pdf'
+        else:
+            filename = '/home/jheidersberger/Documents/Projects/BabyBotActiveSelf/Pressure2Sound_JH/BioMdl_result_v8.pdf'
+        
+        plt.savefig(filename)
         # plt.show()
 
 if __name__ == "__main__":
-    pac_env = Pacifier(condition="analog", dt=0.01)
+    # Example usage with v6 system (no special features enabled)
+    print("Testing v6 system (no special features)...")
+    pac_env = Pacifier(condition="analog", dt=0.01, 
+                          enable_adaptive_gain=False, 
+                          enable_noise=False, 
+                          enable_selective_integrator=False)
 
     duration = 1.22
     pac_env.run(desired_pressure=0, steps=int(duration/pac_env.dt))
@@ -292,14 +352,6 @@ if __name__ == "__main__":
     duration = 2.5
     pac_env.run(desired_pressure=0.9, steps=int(duration/pac_env.dt))
 
-    # duration = 5.5
-    # pac_env.run(desired_pressure=1.0, steps=int(duration/pac_env.dt))
-
-    # duration = 7.5
-    # pac_env.run(desired_pressure=0.0, steps=int(duration/pac_env.dt))
-
     pac_env.visualize_system(show_pitch=True)
-
-    # pac_env.play_dynamic_pitch()
 
     print("end")
