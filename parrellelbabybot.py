@@ -252,11 +252,20 @@ class  BabyBot(pl.LightningModule):
         else:
             mult = (regulatedForce2/regulatedForce.detach().item())+0.001
         #print(mult)
+
+        #TODO ablate johannes mdoel
+        #mult  = 1
         exhaustion = self.mseLoss(regulatedForce*mult,instinctForce.float().to(self.device))
         self.producedForcesT.append(regulatedForce2)
 
+        #self.producedForcesT.append(regulatedForce.detach().cpu().item())
+
         self.forces.append(regulatedForce.detach().cpu().item())
         
+        #self.theX.append(regulatedForce.detach().cpu().item())
+        #self.theFreq.append(regulatedForce.detach().cpu().item())
+
+
         #record produced force
 
         #print(regulatedForce2-regulatedForce.item())
@@ -294,6 +303,9 @@ class  BabyBot(pl.LightningModule):
         #now we know the true sound which is still called regulated force here and find the prediction loss between it and our predicted sound
         predictionLoss = self.mseLoss(predictedSound,torch.tensor(regulatedForce2/400).float().to(self.device))
         
+        #O ablate johannes mdoel
+        #predictionLoss = self.mseLoss(predictedSound,regulatedForce*mult)
+
         #if len(ps) > 1:
         #    ps = ps[-1]
         #here we want to create a label as far away from our last sound as possible to encourage exploration in our used force
@@ -317,7 +329,13 @@ class  BabyBot(pl.LightningModule):
             self.pastSounds  = self.pastSounds[1:]
         #self.pastSounds = torch.tensor([regulatedForce.item()]).cuda()+self.sensoryNoise
         #we record the current sound so that we can display the sounds created during training at a later time.
+        
+        
         self.producedSoundsT.append(regulatedForce2/400)
+        #ODO ablate johannes mdoel
+        #self.producedSoundsT.append(regulatedForce)
+
+
         if self.condition == "analog":
             self.label.append(1)
         else:
@@ -457,6 +475,7 @@ def runSpecifcAblation(baseParameters,ablationName):
             df.to_csv(dir+fileNameNonAnalog,index=None,header=["x","frequency"])
 
 def performAblations():
+    #TODO refine this, need a second dict, one things to try, second defaults.
     baseParameters= {
         "actuaryNoise":0.02, # x4 young (not anymore)
         #"learningRate":0.005,
@@ -566,6 +585,48 @@ def gridSearch():
 baseParameters= {
         "actuaryNoise":0.02, # x4 young (not anymore)
         #"learningRate":0.005,
+        "memory":2,
+        #"threshold":0.1667,
+        #"runs":50,
+        #"age":"young",
+        "sensoryNoise":0.05,
+        "exploration":1, # 0 1 1 
+        "prediction":1,
+        "exhaustion":1,
+        "strength":0.45,
+        "standard": True}
+#runSpecifcAblation(baseParameters,"memory_2")
+baseParameters= {
+        "actuaryNoise":0.02, # x4 young (not anymore)
+        #"learningRate":0.005,
+        "memory":10,
+        #"threshold":0.1667,
+        #"runs":50,
+        #"age":"young",
+        "sensoryNoise":0.05,
+        "exploration":1, # 0 1 1 
+        "prediction":1,
+        "exhaustion":1,
+        "strength":0.45,
+        "standard": True}
+#runSpecifcAblation(baseParameters,"memory_10")
+baseParameters= {
+        "actuaryNoise":0.02, # x4 young (not anymore)
+        #"learningRate":0.005,
+        "memory":5,
+        #"threshold":0.1667,
+        #"runs":50,
+        #"age":"young",
+        "sensoryNoise":0.05,
+        "exploration":1, # 0 1 1 
+        "prediction":5,
+        "exhaustion":1,
+        "strength":0.45,
+        "standard": True}
+#runSpecifcAblation(baseParameters,"prediction_5")
+baseParameters= {
+        "actuaryNoise":0.1, # x4 young (not anymore)
+        #"learningRate":0.005,
         "memory":5,
         #"threshold":0.1667,
         #"runs":50,
@@ -576,9 +637,65 @@ baseParameters= {
         "exhaustion":1,
         "strength":0.45,
         "standard": True}
-#runSpecifcAblation(baseParameters,"exhaustionFromPacifier")
+#runSpecifcAblation(baseParameters,"actuary_noise_0_1")
+baseParameters= {
+        "actuaryNoise":0.02, # x4 young (not anymore)
+        #"learningRate":0.005,
+        "memory":5,
+        #"threshold":0.1667,
+        #"runs":50,
+        #"age":"young",
+        "sensoryNoise":0.05,
+        "exploration":1, # 0 1 1 
+        "prediction":1,
+        "exhaustion":1,
+        "strength":0.0,
+        "standard": True}
+#runSpecifcAblation(baseParameters,"strength")
+baseParameters= {
+        "actuaryNoise":0.02, # x4 young (not anymore)
+        #"learningRate":0.005,
+        "memory":5,
+        #"threshold":0.1667,
+        #"runs":50,
+        #"age":"young",
+        "sensoryNoise":0.05,
+        "exploration":1, # 0 1 1 
+        "prediction":1,
+        "exhaustion":1,
+        "strength":0.9,
+        "standard": True}
+#runSpecifcAblation(baseParameters,"strength_0_9")
+baseParameters= {
+        "actuaryNoise":0.02, # x4 young (not anymore)
+        #"learningRate":0.005,
+        "memory":5,
+        #"threshold":0.1667,
+        #"runs":50,
+        #"age":"young",
+        "sensoryNoise":0.05,
+        "exploration":1, # 0 1 1 
+        "prediction":1,
+        "exhaustion":1,
+        "strength":0.25,
+        "standard": True}
+#runSpecifcAblation(baseParameters,"strength_0_2_5")
+baseParameters= {
+        "actuaryNoise":0.02, # x4 young (not anymore)
+        #"learningRate":0.005,
+        "memory":5,
+        #"threshold":0.1667,
+        #"runs":50,
+        #"age":"young",
+        "sensoryNoise":0.05,
+        "exploration":1, # 0 1 1 
+        "prediction":1,
+        "exhaustion":1,
+        "strength":0.45,
+        "standard": True}
+runSpecifcAblation(baseParameters,"mechanical_model")
 #
-performAblations()
+#performAblations()
 #gridResults = gridSearch()
 #df = pd.DataFrame(gridResults)
 #df.to_csv("./gridResCSVNewImproved.csv")

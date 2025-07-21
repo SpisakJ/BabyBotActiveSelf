@@ -13,9 +13,9 @@ def setupPlot():
 def plotAblation(key, colors=['blue', 'orange']):
     anadata = []
     nonanadata = []
-    for filename in glob.glob("./Ablations/"+key+"/pressures_age_old_start_analog_*.csv"):
+    for filename in glob.glob("./Ablations_16_05_2025/"+key+"/pressures_age_old_start_analog_*.csv"):
         anadata.append(pd.read_csv(filename)["x"].values)
-    for filename in glob.glob("./Ablations/"+key+"/pressures_age_old_start_non-analog_*.csv"):
+    for filename in glob.glob("./Ablations_16_05_2025/"+key+"/pressures_age_old_start_non-analog_*.csv"):
         nonanadata.append(pd.read_csv(filename)["x"].values)
 
     data_array_ana = np.array(anadata)
@@ -42,7 +42,7 @@ def plotAblation(key, colors=['blue', 'orange']):
     
 # Example usage:
 setupPlot()
-plotAblation("exhaustionFromPacifier", colors=['blue', 'orange'])
+plotAblation("mechanical_model", colors=['blue', 'orange'])
 plotAblation("standard", colors=['red', 'green'])
 plt.title('Comparison of Different Ablations')
 plt.show()
