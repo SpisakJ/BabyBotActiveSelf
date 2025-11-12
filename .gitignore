@@ -4,3 +4,7 @@
 /lightning_logs/
 *.zip
 *.ckpt
+*.csv*
+settings.json
+*.pyc
+*.png

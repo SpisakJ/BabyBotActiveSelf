@@ -14,14 +14,15 @@ import pytorch_lightning as pl
 from torch.utils.data import Dataset, DataLoader
 
 import seaborn as sns
-from Pressure2Sound_JH import Pressure2Soundv6
+from Pressure2Sound_JH import Pressure2Soundv8
 
 #importing numpy for some maths such as sinus curve
 import numpy as np
 
 #import matplotlib for graph plotting
 import matplotlib.pyplot as plt
-steps = 5400
+extraLength = 5
+steps = 5400*extraLength
 #dataset that produces dummies as we need it for the torch lightning module
 class Infinite(Dataset):
 
@@ -75,14 +76,19 @@ class soundPrediction(torch.nn.Module):
         return x
 
 class  BabyBot(pl.LightningModule):
-    def __init__(self,suckingFrequency = 0.1, memory = 10, noise=0.1, lr=0.001, condition="analog",threshold=0.1,age="old",sensoryNoise = 0.1,lossWeigths=[1.0,1.0,1.0],strength=0.4,device="cuda"):
+    def __init__(self,suckingFrequency = 0.1, memory = 10, noise=0.1, lr=0.001, condition="analog",threshold=0.1,age="old",sensoryNoise = 0.1,lossWeigths=[1.0,1.0,1.0],strength=0.4,enable_adaptive_gain=False,enable_noise=False, enable_selective_integrator=False,device="cuda"):
         super(BabyBot,self).__init__()
         #age of the baby only used for plotting
         self.age= age
         
         #threshold under which no sound is produced
         self.threshold = threshold
-        
+
+
+        self.enable_adaptive_gain = enable_adaptive_gain
+        self.enable_noise = enable_noise
+        self.enable_selective_integrator = enable_selective_integrator
+        self.johannesData = []
         #noise towards how accurate the baby controls its force
         self.noise = noise
         
@@ -147,7 +153,7 @@ class  BabyBot(pl.LightningModule):
         #this is so that in non anlog condition next timesteps after being over threshold still make sound
         self.leftOverSoundCounter = 100
         
-        self.pacifier = Pressure2Soundv6.Pacifier()
+        self.pacifier = Pressure2Soundv8.Pacifier(dt=0.1,enable_adaptive_gain=self.enable_adaptive_gain, enable_noise=self.enable_noise, enable_selective_integrator=self.enable_selective_integrator)
         
     def mapToReal(self):        #
         return self.producedForcesT#pacifier.map_pressure_to_frequency(self.producedForcesT, len(self.producedForcesT)/10)
@@ -155,14 +161,20 @@ class  BabyBot(pl.LightningModule):
     def realBack(self, desiredPressure):
         self.pacifier.condition = self.condition
         self.pacifier.run(desiredPressure, 1)
+        #self.pacifier.x = desiredPressure
         xToAppend = self.pacifier.x
+        
+        
+    
         self.theX.append(xToAppend)
         self.theFreq.append(self.pacifier.frequency)
+        self.johannesData.append([desiredPressure,self.pacifier.x])
         if self.time*10 < self.conditionLength:
             return torch.tensor(0.0, device=self.device)
-        if self.time*10 > self.conditionLength*5:
+        if self.time*10 > self.conditionLength*5*extraLength:
             return torch.tensor(0.0, device=self.device)
         # Return a new tensor, not a reference to self.pacifier.x
+        # print(self.pacifier.x,self.pacifier.frequency)
         return self.pacifier.x
         
     #models time passed important for instinct
@@ -186,21 +198,7 @@ class  BabyBot(pl.LightningModule):
         pastSounds = torch.cat((pastSounds,sound)).to(self.device)
         self.pastSounds = pastSounds
         
-    #calculates sound from force. im only using this during eval as it made the tracing harder. It should be adjusted so it can be used in train step as well    
-    def forceToSound(self,force):
-        if self.condition == "analog":
-            if force > self.threshold: #og paper has a treshold of some force not sure hwo to translate the amount of force
-                sound = force #sound depends on force
-            else:
-                sound = torch.tensor([0.0],requires_grad=True).float().to(self.device)
-        elif self.condition == "non-analog":
-            if force > self.threshold:
-                sound = force*0+torch.rand(1).float().to(self.device) #sound does not depend on force
-            else:
-                sound = torch.tensor([0.0],requires_grad=True).float().to(self.device)
-        sound = torch.tensor([sound]).to(self.device)
-        self.addSoundToPastSounds(sound)
-        return sound
+
     #uses the prediction model to predict sound from current force
     def soundPrediction(self,regulatedForce):
         predictedSound = self.soundPredictionModel(regulatedForce)
@@ -236,7 +234,6 @@ class  BabyBot(pl.LightningModule):
         #use model to gain current force, the model does take in the last sound but here we just use the function from this class
         #ps is past sound
         regulatedForce,ps = self.regulateSucking()
-        
         self.wantedForcesT.append(regulatedForce.detach().cpu().item())
         
         #we predict a sound using the prediction model
@@ -245,23 +242,46 @@ class  BabyBot(pl.LightningModule):
         #we add noise with the noise function
         regulatedForce = self.suckingNoise(regulatedForce)
         
-        regulatedForce2 = self.realBack(regulatedForce.item()) #shouldnt use item but have to somehow
+        regulatedForce2 = self.realBack(regulatedForce.item()) #
+        freq = self.pacifier.frequency
+        if isinstance(regulatedForce2,list):
+            regulatedForce2 = regulatedForce2[0]
 
-        if self.time*10 < self.conditionLength or self.time*10 > 5* self.conditionLength:
+
+        if self.time*10 < self.conditionLength or self.time*10 > 5* self.conditionLength*extraLength:
             mult = 1
+            sleeper  = 0
         else:
-            mult = (regulatedForce2/regulatedForce.detach().item())+0.001
+            sleeper = 0.05
+            try:
+                mult = (regulatedForce2/regulatedForce.detach().item())[0]+0.001
+            except Exception as e:
+                mult = (regulatedForce2/regulatedForce.detach().item())+0.001
+        if self.time*10 < self.conditionLength or self.time*10 > 5* self.conditionLength*extraLength:
+            fmult = 1
+        else:
+            try:
+                fmult = (freq/regulatedForce.detach().item())[0]+0.001
+            except Exception as e:
+                fmult = (freq/regulatedForce.detach().item())+0.001
+
         #print(mult)
 
-        #TODO ablate johannes mdoel
+        #TO DO ablate johannes mdoel
         #mult  = 1
-        exhaustion = self.mseLoss(regulatedForce*mult,instinctForce.float().to(self.device))
-        self.producedForcesT.append(regulatedForce2)
+        #print(regulatedForce,mult,regulatedForce2,regulatedForce*mult)
+        #time.sleep(sleeper)
+        exhaustion = self.mseLoss(regulatedForce*mult,torch.tensor([0.225]))#instinctForce.float().to(self.device))
+
+        try:
+            self.producedForcesT.append(regulatedForce2)
+        except Exception as e:
+            print(f"Error appending to producedForcesT: {e}")
+            self.producedForcesT.append(regulatedForce2.detach().cpu().item())
 
         #self.producedForcesT.append(regulatedForce.detach().cpu().item())
 
         self.forces.append(regulatedForce.detach().cpu().item())
-        
         #self.theX.append(regulatedForce.detach().cpu().item())
         #self.theFreq.append(regulatedForce.detach().cpu().item())
 
@@ -281,14 +301,26 @@ class  BabyBot(pl.LightningModule):
         #basicly the force to sound function but adjusted and copied here to make back propagation easier 
         #this should be changed so that it just uses the existing funciton
 
-        if self.time*10 < self.conditionLength or self.time*10 > 5* self.conditionLength:
-            regulatedForce = regulatedForce*0
+        #here we want to create a label as far away from our last sound as possible to encourage exploration in our used force
+        '''        if ps[-1] < 0.5:
+            label = ps[-1]**0
+        elif ps[-1] >= 0.5:
+            label= ps[-1]*0'''
+            
+        #using the label just created we want to minimize the distance from it to our current sound
+        #print(regulatedForce*mult)
+        repLoss = 1-self.mseLoss((regulatedForce*fmult)/400,ps[-1])
+
         
+        '''        if self.time*10 < self.conditionLength or self.time*10 > 5* self.conditionLength*extraLength:
+            regulatedForce = regulatedForce*0
+   
         elif self.condition == "analog":
             if regulatedForce > self.threshold: #og paper has a treshold of some force not sure hwo to translate the amount of force
                 regulatedForce = regulatedForce #sound depends on force
             else:
                 regulatedForce = regulatedForce*0#torch.tensor([0.0],requires_grad=True).float().cuda()
+
         elif self.condition == "non-analog":
             if regulatedForce > self.threshold:
                 regulatedForce = regulatedForce*0+torch.rand(1).float().to(self.device) #sound does not depend on force
@@ -298,40 +330,46 @@ class  BabyBot(pl.LightningModule):
                     regulatedForce = regulatedForce*0#torch.tensor([0.0],requires_grad=True).float().cuda()
                 else:
                     regulatedForce = regulatedForce*0+torch.rand(1).float().to(self.device) 
-                    self.leftOverSoundCounter -= 1
-        
-        #now we know the true sound which is still called regulated force here and find the prediction loss between it and our predicted sound
-        predictionLoss = self.mseLoss(predictedSound,torch.tensor(regulatedForce2/400).float().to(self.device))
-        
-        #O ablate johannes mdoel
-        #predictionLoss = self.mseLoss(predictedSound,regulatedForce*mult)
+                    self.leftOverSoundCounter -= 1'''
 
-        #if len(ps) > 1:
-        #    ps = ps[-1]
-        #here we want to create a label as far away from our last sound as possible to encourage exploration in our used force
-        if ps[-1] < 0.5:
-            label = ps[-1]**0
-        elif ps[-1] >= 0.5:
-            label= ps[-1]*0
+        #now we know the true sound which is still called regulated force here and find the prediction loss between it and our predicted sound
+        #predictionLoss = self.mseLoss(predictedSound,torch.tensor(regulatedForce2/400).float().to(self.device))
+        
+
+        #O ablate johannes mdoel
+        #
+        
+        predictionLoss = self.mseLoss(predictedSound,torch.tensor(freq/400).float())#torch.tensor(freq/400).float())
+
+
             
         #using the label just created we want to minimize the distance from it to our current sound
-        repLoss = 1-self.mseLoss(regulatedForce*mult,ps[-1])
+        #print(regulatedForce*mult)
+
+        #repLoss = 1-self.mseLoss(torch.tensor(freq/400).float(),ps[-1])
+        
+        #if len(ps) > 1:
+        #    ps = ps[-1]
         
         #we add all our losses together
-        loss =repLoss*self.lossWeigths[0]+predictionLoss*self.lossWeigths[1]+exhaustion*self.lossWeigths[2]
+        #print(f"repLoss: {repLoss}, {self.lossWeigths[0]}, predictionLoss: {predictionLoss},{self.lossWeigths[1]}, exhaustion: {exhaustion},{self.lossWeigths[2]}")
         
+        loss =repLoss*self.lossWeigths[0]+predictionLoss*self.lossWeigths[1]+exhaustion*self.lossWeigths[2]
+
         #we record the loss which can be used to display the loss after training
         self.recLosses.append(loss.item())
         
         #we update the past sound with the current sound
         with torch.no_grad():
-            self.pastSounds = torch.cat((self.pastSounds,torch.tensor([regulatedForce*mult])+self.sensoryNoise))
+            self.pastSounds = torch.cat((self.pastSounds,torch.tensor([(regulatedForce*fmult)/400])+self.sensoryNoise))
             self.pastSounds  = self.pastSounds[1:]
+            #print(f"Past Sounds: {self.pastSounds}, frequency: {freq/400}")
+
         #self.pastSounds = torch.tensor([regulatedForce.item()]).cuda()+self.sensoryNoise
         #we record the current sound so that we can display the sounds created during training at a later time.
         
         
-        self.producedSoundsT.append(regulatedForce2/400)
+        self.producedSoundsT.append(freq/400)
         #ODO ablate johannes mdoel
         #self.producedSoundsT.append(regulatedForce)
 
@@ -344,39 +382,41 @@ class  BabyBot(pl.LightningModule):
         
         return loss
     #this function does an eval run on it and produces some graphs so we can see how the sound and force looks at the end
-    def showBehaviour(self):        
+    def showBehaviour(self):   
+        #plt.plot(self.wantedForcesT)   
+        #plt.show()  
         #variable to keep the amplitudes of sound in eval, was the amplitude in the paper for force or sound? would need to be adjusted if its force
-        amplitude =[]
+        #amplitude =[]
             
         #variable to count no sound happening in eval
-        zeroCount=0
-        thresholdCountAna = 0
-        thresholdCountNAna = 0
+        #zeroCount=0
+        #thresholdCountAna = 0
+        #thresholdCountNAna = 0
         #go through produced sounds
-        for sound in self.producedSoundsT:
+        #for sound in self.producedSoundsT:
             
             #how far away from the average sound is the current sound
-            amp = abs(np.average(self.producedSoundsT)-sound)
+        #    amp = abs(np.average(self.producedSoundsT)-sound)
             
             #add it to our amplitude variable
-            amplitude.append(amp)
+        #    amplitude.append(amp)
             
             #if sound is 0 add 1 to our zero count
-            if sound ==0:
-                zeroCount+=1
-        for i in range (len( self.theX)):
+        #    if sound ==0:
+        #        zeroCount+=1
+        #for i in range (len( self.theX)):
             #print(self.producedForcesT[i])
             
-            if self.theX[i] >= 0.1667 and self.theX[i]<= 0.2083:
-                if self.label[i] ==1:
-                    thresholdCountAna +=1
-                elif self.label[i] == 0:
-                    thresholdCountNAna +=1
-        return np.average(self.producedSoundsT),np.average(amplitude),zeroCount,[thresholdCountAna,thresholdCountNAna]
+        #    if self.theX[i] >= 0.1667 and self.theX[i]<= 0.2083:
+        #        if self.label[i] ==1:
+        #            thresholdCountAna +=1
+        #        elif self.label[i] == 0:
+        #            thresholdCountNAna +=1
+        #return np.average(self.producedSoundsT),np.average(amplitude),zeroCount,[thresholdCountAna,thresholdCountNAna]
     
 
     
-'''
+        '''
 This is the execution, you can change the variables in myModel = BabyBot()
 novelty does not really do anything right now
 condition can be anloag or non-analog and decides on how force is translated into sound.
@@ -430,8 +470,8 @@ def runExperiment(epochs,condition,noise,learningRate,memory,threshold,runs,age,
     return ["averageSound",np.average(averageSound),"averageAmplitude",np.average(averageAmp),"averageZeros",np.average(zeros),"TresholdHits [Analog,nonAnalog]",thresholdHit],freq,myModel.forces
 import concurrent.futures
 import time
-def runSpecifcAblation(baseParameters,ablationName):
-    for run in range(50):
+def runSpecifcAblation(baseParameters,ablationName,enable_adaptive_gain=False, enable_noise=False, enable_selective_integrator=False):
+    for run in range(10):
             myModelAnalog = BabyBot(condition="analog",
                               noise=baseParameters["actuaryNoise"],
                               lr=0.005,
@@ -442,11 +482,16 @@ def runSpecifcAblation(baseParameters,ablationName):
                               lossWeigths=[baseParameters["exploration"],
                          baseParameters["prediction"],
                          baseParameters["exhaustion"]],
-                         strength=baseParameters["strength"])
+                         strength=baseParameters["strength"],
+                         enable_adaptive_gain=enable_adaptive_gain,
+                         enable_noise=enable_noise,
+                         enable_selective_integrator=enable_selective_integrator)
             trainer = pl.Trainer("cpu",max_epochs=1)
             trainer.fit(model=myModelAnalog)   
             analogX = myModelAnalog.theX
+            analogJohannes = myModelAnalog.johannesData
             analogFreq = myModelAnalog.theFreq
+            myModelAnalog.showBehaviour()
 
             myModelNonalog = BabyBot(condition="non-analog",
                               noise=baseParameters["actuaryNoise"],
@@ -458,12 +503,18 @@ def runSpecifcAblation(baseParameters,ablationName):
                               lossWeigths=[baseParameters["exploration"],
                          baseParameters["prediction"],
                          baseParameters["exhaustion"]],
-                         strength=baseParameters["strength"])
+                         strength=baseParameters["strength"],
+                         enable_adaptive_gain=enable_adaptive_gain,
+                         enable_noise=enable_noise,
+                         enable_selective_integrator=enable_selective_integrator)
             trainer = pl.Trainer("cpu",max_epochs=1)
             trainer.fit(model=myModelNonalog)
             nonanalogX = myModelNonalog.theX
+
+            nonAnalogJohannes = myModelNonalog.johannesData
             nonanalogFreq = myModelNonalog.theFreq
-            dir = f"./Ablations_16_05_2025/{ablationName}/"
+            myModelNonalog.showBehaviour()
+            dir = f"./Ablations_06_08_2025/{ablationName}/"
             os.makedirs(dir, exist_ok=True)
             fileNameNonAnalog = f"pressures_age_old_start_non-analog_trial_{run}_steps_{steps}_dt_01_lr_0005_exploration_{baseParameters['exploration']}_exhaustion_{baseParameters['exhaustion']}_prediction_{baseParameters['prediction']}_memory_{baseParameters['memory']}_strength_{baseParameters['strength']}_snoise_{baseParameters['sensoryNoise']}_anoise_{baseParameters['actuaryNoise']}.csv"
             fileNameAnalog = f"pressures_age_old_start_analog_trial_{run}_steps_{steps}_dt_01_lr_0005_exploration_{baseParameters['exploration']}_exhaustion_{baseParameters['exhaustion']}_prediction_{baseParameters['prediction']}_memory_{baseParameters['memory']}_strength_{baseParameters['strength']}_snoise_{baseParameters['sensoryNoise']}_anoise_{baseParameters['actuaryNoise']}.csv"
@@ -473,6 +524,10 @@ def runSpecifcAblation(baseParameters,ablationName):
             data = {"x":nonanalogX,"frequency":nonanalogFreq}
             df = pd.DataFrame(data)
             df.to_csv(dir+fileNameNonAnalog,index=None,header=["x","frequency"])
+            df = pd.DataFrame(analogJohannes)
+            df.to_csv(dir+fileNameAnalog+"johannes",index=None,header=["desired","output"])
+            df = pd.DataFrame(nonAnalogJohannes)
+            df.to_csv(dir+fileNameNonAnalog+"johannes",index=None,header=["desired","output"])
 
 def performAblations():
     #TODO refine this, need a second dict, one things to try, second defaults.
@@ -581,7 +636,7 @@ def gridSearch():
     print("Total computation time:", endTime - startTime)
     
     return results
-#%%
+
 baseParameters= {
         "actuaryNoise":0.02, # x4 young (not anymore)
         #"learningRate":0.005,
@@ -688,12 +743,22 @@ baseParameters= {
         #"runs":50,
         #"age":"young",
         "sensoryNoise":0.05,
-        "exploration":0, # 0 1 1 
-        "prediction":0,
+        "exploration":1, # 0 1 1 
+        "prediction":1,
         "exhaustion":1,
         "strength":0.45,
         "standard": True}
-runSpecifcAblation(baseParameters,"newTryExhOnly")
+#runSpecifcAblation(baseParameters,"mechanical_model_all_false",enable_adaptive_gain=False, enable_noise=False, enable_selective_integrator=False)
+#runSpecifcAblation(baseParameters,"mechanical_model_gain_true_dt_01",enable_adaptive_gain=True, enable_noise=False, enable_selective_integrator=False)
+#runSpecifcAblation(baseParameters,"mechanical_model_noise_true_dt_01",enable_adaptive_gain=False, enable_noise=True, enable_selective_integrator=False)
+#runSpecifcAblation(baseParameters,"mechanical_model_integrator_true_dt_01",enable_adaptive_gain=False, enable_noise=False, enable_selective_integrator=True)
+#runSpecifcAblation(baseParameters,"mechanical_model_all_true_dt_01",enable_adaptive_gain=True, enable_noise=True, enable_selective_integrator=True)
+#runSpecifcAblation(baseParameters,"mechanical_model_gain_false_dt_01",enable_adaptive_gain=False, enable_noise=True, enable_selective_integrator=True)
+#runSpecifcAblation(baseParameters,"mechanical_model_noise_false_dt_01",enable_adaptive_gain=True, enable_noise=False, enable_selective_integrator=True)
+#runSpecifcAblation(baseParameters,"mechanical_model_integrator_false_dt_01",enable_adaptive_gain=True, enable_noise=True, enable_selective_integrator=False)
+
+runSpecifcAblation(baseParameters,"allLossesNormPastConstInst",enable_adaptive_gain=False, enable_noise=False, enable_selective_integrator=False)
+
 #
 #performAblations()
 #gridResults = gridSearch()
